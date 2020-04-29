@@ -1,5 +1,6 @@
 import argparse
 import dataclasses
+import pathlib
 
 import numpy as np
 import torch
@@ -9,77 +10,70 @@ import torch.utils
 import torch.utils.data
 import torchvision
 
-from tissue_dataset import TissueDataset
-from torch_utils.samplers import (DistributedWeightedRandomSampler,
+from .tissue_dataset import TissueDataset
+from .torch_utils.samplers import (DistributedWeightedRandomSampler,
                                   OrderedDistributedSampler)
-from torch_utils.streaming_trainer import (StreamingCheckpointedTrainer,
+from .torch_utils.streaming_trainer import (StreamingCheckpointedTrainer,
                                            StreamingTrainerOptions)
-from torch_utils.utils import count_parameters, progress_bar
+from .torch_utils.utils import count_parameters, progress_bar
+
 
 @dataclasses.dataclass
 class ExperimentOptions:
-    # REQUIRED options
-    name: str = ''
-    num_classes: int = 1
-    train_csv: str = ''
-    val_csv: str = ''
-    data_dir: str = ''
-    save_dir: str = ''
+    """ REQUIRED """
+    name: str = ''  # The name of the current experiment, used for saving checkpoints
+    num_classes: int = 1  # The number of classes in the task
 
-    # data options
-    train_set_size: int = -1
+    train_csv: str = ''  # The filenames (without extension) and labels of train set
+    val_csv: str = ''  # The filenames (without extension) and labels of validation or test set
+    data_dir: str = ''  # The directory where the images reside
+    filetype: str = '.jpg'  #  The file-extension of the images
+    save_dir: str = ''  # Where to save the checkpoints
 
-    # distributed options
-    local_rank: int = 0
-    num_workers: int = 1
+    """ NOT REQUIRED """
+    train_set_size: int = -1  # Sometimes you want to test on smaller train-set you can limit the n-images here
 
     # pretrain options
-    pretrained: bool = True
+    pretrained: bool = True  # Whether to use ImageNet weights
 
     # train options
-    image_size: int = 16384
-    tile_size: int = 5120
-    epochs: int = 50
-    lr: float = 1e-4
-    batch_size: int = 16
+    image_size: int = 16384  # Effective input size of the network
+    tile_size: int = 5120  # The input/tile size of the streaming-part of the network
+    epochs: int = 50  # How many epochs to train
+    lr: float = 1e-4  # Learning rate
+    batch_size: int = 16  # Effective mini-batch size
+    multilabel: bool = False
+    regression: bool = False
 
-    """ 
-    If accumulate_batch is -1 then the last part of the network
-    will receive a minibatch-size of 1 and gradients are accumulated
-    over batch_size number of images 
-    (thus accumulate_batch will be automatically calculated)
-    """
-    accumulate_batch: int = -1
-    validation: bool = True
-    variable_input_shapes: bool = False
+    validation: bool = True  # Whether to run on validation set
+    validation_interval: int = 1  # How many times to run on validation set, after n train epochs
+    epoch_multiply: int = 1  # This will increase the size of one train epoch by reusing train images
+
+    # speed
+    variable_input_shapes: bool = False  # When the images vary a lot with size, this helps with speed
+    mixedprecision: bool = True  # Paper is trained with full precision, but this is way faster
+    normalize_on_gpu: bool = True  # Helps with RAM usage of dataloaders
+    num_workers: int = 1  # Number of dataloader workers
 
     # model options
-    resnet: bool = True
-    mobilenet: bool = False
-    mixedprecision: bool = True
-    normalize_on_gpu: bool = True
-    train_streaming_layers: bool = True
-    train_all_layers: bool = False
-
-    # init options
-    warmup_batches: int = 0
-    warmup_decay: float = 1.0
-
-    # resume options
-    """ Try resuming always resumes from last epoch from 'name'-experiment """
-    try_resuming: bool = True
-    resume_name: str = ''
-    resume_epoch: int = -1
+    resnet: bool = True  # Only resnet is tested so far
+    mobilenet: bool = False  # Experimental
+    train_streaming_layers: bool = True  # Whether to backpropagate of streaming-part of network
+    train_all_layers: bool = False  # Whether to finetune whole network, or only last block
 
     # save and logging options
-    save: bool = True
-    progressbar: bool = True
+    resuming: bool = True  # Will restart from the last checkpoint with same experiment-name
+    resume_name: str = ''  # Restart from another experiment with this name
+    resume_epoch: int = -1  # Restart from specific epoch
+    save: bool = True  # Save checkpoints
+    progressbar: bool = True  # Show the progressbar
 
     # evaluation options
-    # average weights over 5 epochs around best picked epoch
-    weight_averaging: bool = False
-    test: bool = False
-    only_eval: bool = False
+    weight_averaging: bool = False  # average weights over 5 epochs around picked epoch
+    only_eval: bool = False  # Only do one evaluation epoch
+
+    local_rank: int = 0  # Do not touch, used by PyTorch when training distributed
+    accumulate_batch: int = -1  # Do not touch, is calculated automatically
 
     def configure_parser_with_options(self):
         """ Create an argparser based on the attributes """
@@ -97,10 +91,9 @@ class ExperimentOptions:
         return parser
 
     def parser_to_options(self, parsed_args: dict):
-        """ Parse and argparser """
+        """ Parse an argparser """
         for name, value in parsed_args.items():
             self.__setattr__(name, value)
-            # self[name] = value  # type:ignore
 
 def fix_seed():
     torch.manual_seed(0)
@@ -182,7 +175,8 @@ class Experiment(object):
         epochs_to_train = np.arange(self.start_at_epoch, self.settings.epochs)
         for e in epochs_to_train:
             self.train_epoch(e, self.trainer)
-            if self.settings.validation: self.eval_epoch(e)
+            if self.settings.validation and e % self.settings.validation_interval == 0: 
+                self.eval_epoch(e)
 
     def train_epoch(self, e, trainer):
         self.epoch = e
@@ -192,7 +186,8 @@ class Experiment(object):
         if self.settings.mixedprecision and e == 0: self.trainer.grad_scaler.set_growth_interval(20)
 
     def log_train_metrics(self, preds, gt, e):
-        print('Train loop, predictions:', gt.flatten()[:10], preds[:10])
+        print('Train loop, example predictions.\nLabels:\n', gt.flatten()[:10],
+              '\nPredictions\n', preds[:10])
 
         avg_acc = self.trainer.average_epoch_accuracy()
         avg_loss = self.trainer.average_epoch_loss()
@@ -213,8 +208,9 @@ class Experiment(object):
             if self.settings.only_eval: str_e = self.settings.resume_epoch
             else: str_e = str(e)
 
-            np.save(f'metrics/{self.settings.name}_eval_preds_{str_e}', preds)
-            np.save(f'metrics/{self.settings.name}_eval_gt_{str_e}', gt)
+            path = pathlib.Path(self.settings.save_dir)
+            np.save(str(path / pathlib.Path(f'{self.settings.name}_eval_preds_{str_e}')), preds)
+            np.save(str(path / pathlib.Path(f'{self.settings.name}_eval_gt_{str_e}')), gt)
 
             self.log_eval_metrics(preds, gt, e)
             self.save_if_needed(e)
@@ -252,7 +248,7 @@ class Experiment(object):
         # https://pytorch.org/docs/stable/data.html
         loader = torch.utils.data.DataLoader(dataset, sampler=sampler, batch_size=batch_size,
                                              shuffle=shuffle, num_workers=num_workers,
-                                             pin_memory=True)
+                                             pin_memory=False)
 
         return loader, sampler
 
@@ -274,31 +270,24 @@ class Experiment(object):
         if validation: limit = -1
         return TissueDataset(img_size=self.settings.image_size,
                              img_dir=self.settings.data_dir,
+                             filetype=self.settings.filetype,
                              csv_fname=csv_file,
                              validation=validation,
                              augmentations=(not validation),
                              limit_size=limit,
-                             testing=self.settings.test,
                              variable_input_shapes=self.settings.variable_input_shapes,
-                             tile_size=self.settings.tile_size)
+                             tile_size=self.settings.tile_size,
+                             multiply_len=self.settings.epoch_multiply if not validation else 1,
+                             num_classes=self.settings.num_classes,
+                             regression=self.settings.regression)
 
     def _train_batch_callback(self, evaluator, batches_evaluated, loss, accuracy):
-        self._decay_lr_if_needed(batches_evaluated)
-
         if self.verbose and self.settings.progressbar:
             avg_acc = evaluator.average_epoch_accuracy()
             avg_loss = evaluator.average_epoch_loss()
             progress_bar(batches_evaluated, len(self.train_dataset),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Train", avg_loss, avg_acc, loss))
-
-    def _decay_lr_if_needed(self, batches_evaluated):
-        if batches_evaluated <= self.settings.warmup_batches:
-            for i, param_group in enumerate(self.optimizer.param_groups):  # type:ignore
-                decay = self.settings.warmup_decay
-                decay += (batches_evaluated / self.settings.warmup_batches) * (1 - self.settings.warmup_decay)
-                if i == 0: param_group['lr'] = self.settings.lr * decay
-                else: param_group['lr'] = self.settings.lr * decay / 1
 
     def _eval_batch_callback(self, evaluator, batches_evaluated, loss, accuracy):
         if self.verbose and self.settings.progressbar:
@@ -315,11 +304,12 @@ class Experiment(object):
             print('WARNING: optimizer only training last params of stream_net!')
             if self.settings.mixedprecision:
                 params = list(self.net.parameters())
+                for param in self.stream_net.parameters(): param.requires_grad = False
             else:
                 params = list(self.stream_net[-1].parameters()) + list(self.net.parameters())
-            for param in self.stream_net[:-1].parameters(): param.requires_grad = False
+                for param in self.stream_net[:-1].parameters(): param.requires_grad = False
 
-        self.optimizer = torch.optim.SGD(params, lr=self.settings.lr * self.settings.warmup_decay, momentum=0.9)
+        self.optimizer = torch.optim.SGD(params, lr=self.settings.lr, momentum=0.9)
 
     def _configure_trainers(self):
         options = StreamingTrainerOptions()
@@ -327,7 +317,7 @@ class Experiment(object):
         options.net = self.net
         options.optimizer = self.optimizer
         options.criterion = self.loss
-        options.save_dir = self.settings.save_dir
+        options.save_dir = pathlib.Path(self.settings.save_dir)
         options.checkpointed_net = self.stream_net
         options.batch_size = self.settings.batch_size
         options.accumulate_over_n_batches = self.settings.accumulate_batch
@@ -340,6 +330,8 @@ class Experiment(object):
         options.train_streaming_layers = self.settings.train_streaming_layers
         options.mixedprecision = self.settings.mixedprecision
         options.normalize_on_gpu = self.settings.normalize_on_gpu
+        options.multilabel = self.settings.multilabel
+        options.regression = self.settings.regression
         self.trainer = StreamingCheckpointedTrainer(options)
 
         self.validator = StreamingCheckpointedTrainer(options, sCNN=self.trainer.sCNN)
@@ -360,8 +352,12 @@ class Experiment(object):
 
     def _configure_loss(self):
         weight = None
-        # self.loss = torch.nn.BCEWithLogitsLoss(weight=weight)
-        self.loss = torch.nn.CrossEntropyLoss(weight=weight)
+        if self.settings.multilabel:
+            self.loss = torch.nn.BCEWithLogitsLoss(weight=weight)
+        elif self.settings.regression:
+            self.loss = torch.nn.SmoothL1Loss() 
+        else:
+            self.loss = torch.nn.CrossEntropyLoss(weight=weight)
 
     def _configure_model(self):
         if self.settings.mobilenet:
@@ -404,7 +400,7 @@ class Experiment(object):
         state = None
         resumed = False
 
-        if self.settings.try_resuming:
+        if self.settings.resuming:
             resumed, state = self._try_resuming_last_checkpoint(resumed)
 
         if not resumed and self.settings.resume_epoch > -1:
@@ -435,7 +431,7 @@ class Experiment(object):
                                      self.settings.resume_epoch + window // 2 + 1)
         for i in checkpoint_range:
             try:
-                current_param_dict = self.trainer.load_checkpoint(resume_name, i)
+                current_param_dict = dict(self.trainer.load_checkpoint(resume_name, i))
             except:
                 print(f'Did not find {i}')
                 return False, None
@@ -451,8 +447,8 @@ class Experiment(object):
             for name in param_dict[key]:
                 param_dict[key][name].data.mul_(1 / window)
 
-        self.trainer.net.load_state_dict(param_dict['state_dict_net'])  # type:ignore
-        self.trainer.checkpointed_net.load_state_dict(param_dict['state_dict_checkpointed'])  # type:ignore
+        self.trainer.net.load_state_dict(param_dict['state_dict_net'])
+        self.trainer.checkpointed_net.load_state_dict(param_dict['state_dict_checkpointed'])
 
         return True, param_dict
 

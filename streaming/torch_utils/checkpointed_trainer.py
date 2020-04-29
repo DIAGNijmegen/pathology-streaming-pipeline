@@ -3,9 +3,10 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import dataclasses
+import pathlib
 
-from torch_utils.diagnostics import check_params_distributed
-from torch_utils.trainer import Trainer, TrainerOptions
+from streaming.torch_utils.diagnostics import check_params_distributed
+from streaming.torch_utils.trainer import Trainer, TrainerOptions
 
 if '1.6' in torch.__version__: # type:ignore
     from torch.cuda.amp import autocast
@@ -16,6 +17,7 @@ class CheckpointedTrainerOptions(TrainerOptions):
     drop_last: bool = True
     checkpointed_net: torch.nn.Module = torch.nn.Sequential()
     mixedprecision: bool = False
+    gather_batch_on_one_gpu: bool = False
 
 class CheckpointedTrainer(Trainer):
     def __init__(self, options: CheckpointedTrainerOptions):
@@ -24,6 +26,7 @@ class CheckpointedTrainer(Trainer):
         self.checkpointed_net = options.checkpointed_net
         self.batch_overal_count = 0
         self.mixedprecision = options.mixedprecision
+        self.gather_batch_on_one_gpu = options.gather_batch_on_one_gpu
         super().__init__(options)
 
     def sync_networks_distributed_if_needed(self, check=True):
@@ -77,12 +80,17 @@ class CheckpointedTrainer(Trainer):
         out.backward(gradient[None])
 
     def backward_batch(self, loss, fmap):
-        if self.mixedprecision:
-            self.grad_scaler.scale(loss).backward()
+        if self.should_finish_batch_on_gpu():
+            if self.mixedprecision:
+                self.grad_scaler.scale(loss).backward()
+            else:
+                loss.backward()
+            fmap_grad = fmap.grad.data
+            fmap_grad.detach()
         else:
-            loss.backward()
-        fmap_grad = fmap.grad.data
-        fmap_grad.detach()
+            fmap_grad = fmap.new_empty(fmap.shape)
+            dist.broadcast(fmap_grad, src=0)
+            fmap_grad = fmap_grad[self.gpu_rank * self.batch_size:self.gpu_rank * self.batch_size + self.batch_size]
         del loss, fmap
         self.backward_batch_checkpointed(fmap_grad)
         del fmap_grad
@@ -103,22 +111,44 @@ class CheckpointedTrainer(Trainer):
 
     def accumulate_batch(self):
         labels = torch.stack(self.batch_labels).cuda()
-        fmap = torch.cat(self.batch_predictions, 0)
+        fmap = torch.cat(self.batch_predictions, 0)  # type:ignore
 
         # trying memory management
         del self.batch_predictions, self.batch_labels
         self.batch_predictions = []  # side effect of function! Memory reasons
 
+        if self.gather_batch_on_one_gpu: 
+            labels, fmap = self.gather_batch(fmap, labels)
+
+        return labels, fmap
+
+    def gather_batch(self, fmap, labels):
+        if self.distributed:
+            gathered_output = [fmap.new_empty(fmap.shape) for i in range(self.n_gpus)]
+            gathered_labels = [labels.new_empty(labels.shape).fill_(-1) for i in range(self.n_gpus)]
+            dist.all_gather(gathered_output, fmap)
+            dist.all_gather(gathered_labels, labels)
+
+            # trying memory management
+            del fmap, labels
+
+            fmap = torch.cat(gathered_output, 0)  # type:ignore
+            labels = torch.cat(gathered_labels, 0).view(-1).cpu()  # type:ignore
+
         return labels, fmap
 
     def should_finish_batch_on_gpu(self):
-        return not self.distributed or self.gpu_rank == 0
+        return not self.distributed or (self.gpu_rank == 0 and self.gather_batch_on_one_gpu)
 
     def evaluate_on_accumulated_batch(self):
         labels, fmap = self.accumulate_batch()
-        fmap.requires_grad = torch.is_grad_enabled()  # type: ignore
-        loss, accuracy, _ = self.evaluate_batch_and_accumulate_stats(fmap, labels)
-        return loss, accuracy, fmap
+        if self.should_finish_batch_on_gpu():
+            fmap.requires_grad = torch.is_grad_enabled()  # type: ignore
+            loss, accuracy, predictions = self.evaluate_batch(fmap, labels)
+            self.save_batch_stats(loss, accuracy, predictions, labels.cpu().numpy())
+            return loss, accuracy, fmap
+        else:
+            return None, None, fmap
 
     def step_optimizer_if_needed(self):
         if self.accumulated_batches == self.accumulate_over_n_batches:
@@ -132,11 +162,15 @@ class CheckpointedTrainer(Trainer):
 
     def train_on_accumulated_batch(self):
         loss, accuracy, fmap = self.evaluate_on_accumulated_batch()
-        loss = loss / self.accumulate_over_n_batches / self.n_gpus
+        if self.should_finish_batch_on_gpu():
+            loss = loss / self.accumulate_over_n_batches / self.n_gpus
         self.backward_batch(loss, fmap)
         self.accumulated_batches += 1
         self.step_optimizer_if_needed()
-        return loss.detach() * self.accumulate_over_n_batches, accuracy
+        if self.should_finish_batch_on_gpu():
+            return loss.detach() * self.accumulate_over_n_batches, accuracy
+        else:
+            return None, None
 
     def train_batch_if_needed(self):
         number_of_image_trained = len(self.batch_images)
@@ -193,8 +227,8 @@ class CheckpointedTrainer(Trainer):
     def check_dataloading_speed(self, start_time, stop_time, threshold=1.0):
         if stop_time - start_time > threshold and not hasattr(self, 'warned_dataloader'):
             print(f'Data loading takes:{stop_time - start_time:.2f} seconds')
-            # print(f'Try adding more RAM or more workers')
-            # self.warned_dataloader = True
+            print(f'Try adding more RAM or more workers')
+            self.warned_dataloader = True
 
     def save_checkpoint(self, name, epoch, additional={}):
         state = {
@@ -204,11 +238,11 @@ class CheckpointedTrainer(Trainer):
             'optimizer': self.optimizer.state_dict()
         }
         state.update(additional)
-        print('Saving', epoch, self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network')
+        print('Saving', epoch, self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'))
 
         try:
-            torch.save(state, self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network')
-            torch.save(state, self.save_dir + 'checkpoint_' + name + '_last')
+            torch.save(state, self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'))
+            torch.save(state, self.save_dir / pathlib.Path('checkpoint_' + name + '_last'))
         except Exception as e:
             print('WARNING: Network not stored', e)
 

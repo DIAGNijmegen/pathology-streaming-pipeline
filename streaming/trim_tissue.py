@@ -23,7 +23,7 @@ def create_parser():
 
     parser.add_argument('--masks-dir', default=None, type=str, required=False)
     parser.add_argument('--mask-suffix', default=None, type=str, required=False)
-    parser.add_argument('--mask-level', default=0, type=int, required=False)
+    # parser.add_argument('--mask-level', default=0, type=int, required=False)
 
     parser.add_argument('--output-spacing', default=1.0, type=int, required=False, help='downsample the wsi for sharpness')
 
@@ -71,6 +71,7 @@ class TissueExtractor(object):
     write_downsample: int = 2
 
     mask_level: int
+    masks_dir: pathlib.Path
 
     diff_mask_to_read_level: int
     diff_mask_to_level_0: int
@@ -79,12 +80,14 @@ class TissueExtractor(object):
     reader: mir.MultiResolutionImage
     mask: np.ndarray
 
-    def __init__(self, save_dir: str, output_spacing=1.0, threshold_downsample=32):
+    def __init__(self, save_dir: str, masks_dir: str, mask_suffix: str, output_spacing=1.0, threshold_downsample=32):
         super().__init__()
         assert save_dir
         self.threshold_downsample = threshold_downsample
         self.save_dir = pathlib.Path(save_dir)
         self.output_spacing = output_spacing
+        self.masks_dir = pathlib.Path(masks_dir)
+        self.mask_suffix = mask_suffix
 
     def extract_files(self, files):
         for file in files:
@@ -96,19 +99,56 @@ class TissueExtractor(object):
         print(file)
         self.open_slide(file)
         self.calculate_read_level()
-        self.calculate_threshold_level()
-        self.calculate_downsamples()
-        self.create_threshold_mask()
-        sampling_mask = self.create_sampling_mask(self.mask)
-        self.save_sampling_mask(sampling_mask, fname)
+        self.create_mask(fname)
 
         coords = self.bounding_box()
         empty_rows, empty_cols = self.find_empty_regions(coords)
+
+        sampling_mask = self.create_sampling_mask(self.mask, coords)
+        empty_rows_mask = self.translate_regions_to_sampling_mask(empty_rows)
+        empty_cols_mask = self.translate_regions_to_sampling_mask(empty_cols)
+        sampling_mask = self.remove_empty_regions(sampling_mask, empty_rows_mask, empty_cols_mask)
+        self.save_sampling_mask(sampling_mask, fname)
+
         image = self.fetch_region(coords)
-        image = self.remove_empty_regions(image, empty_rows, empty_cols)
+        empty_rows_img = self.translate_regions_to_image(empty_rows)
+        empty_cols_img = self.translate_regions_to_image(empty_cols)
+        image = self.remove_empty_regions(image, empty_rows_img, empty_cols_img)
         self.write_img(image, fname.with_suffix(suffix))
 
         print('Wrote', fname.with_suffix(suffix))
+
+    def create_mask(self, fname):
+        if self.masks_dir:
+            maskfn = str(self.masks_dir / fname.stem) + self.mask_suffix
+            self.read_threshold_mask(maskfn)
+        else: 
+            maskfn = None
+
+        self.calculate_threshold_level()
+        self.calculate_downsamples()
+
+        if not maskfn:
+            self.create_threshold_mask()
+
+    def translate_regions_to_image(self, regions):
+        if regions is None:
+            return None
+        regions = regions.copy()
+        regions = regions.astype(np.float32)
+        regions *= self.diff_mask_to_read_level
+        regions /= self.write_downsample
+        return np.round(regions).astype(np.uint32)
+
+    def translate_regions_to_sampling_mask(self, regions):
+        if regions is None:
+            return None
+        regions = regions.copy()
+        regions = regions.astype(np.float32)
+        regions *= self.diff_mask_to_read_level
+        regions /= self.write_downsample
+        regions /= 100
+        return np.round(regions).astype(np.uint32)
 
     def calculate_read_level(self):
         downsample = int(round(self.output_spacing / self.reader.getSpacing()[0]))
@@ -158,10 +198,12 @@ class TissueExtractor(object):
 
         self.mask = wsi_high_level_mask
 
-    def create_sampling_mask(self, mask, train_tile_size=16384):
-        dimensions = self.reader.getLevelDimensions(self.read_downsample)
-        small = cv2.resize(mask, (int(dimensions[0] / self.write_downsample / 100), 
-                                  int(dimensions[1] / self.write_downsample / 100)))
+    def create_sampling_mask(self, mask, coords, train_tile_size=16384):
+        y, height, x, width = coords
+
+        mask_height = int(height * (self.diff_mask_to_read_level / self.write_downsample) / 100)
+        mask_width = int(width * (self.diff_mask_to_read_level / self.write_downsample) / 100)
+        small = cv2.resize(mask[y:y+height, x:x+width], (mask_width, mask_height))
 
         kernel = np.ones((int(train_tile_size / 100 // self.write_downsample), 
                           int(train_tile_size / 100 // self.write_downsample)))
@@ -177,11 +219,11 @@ class TissueExtractor(object):
         np.save(str(mask_fname), mask)
 
     def read_threshold_mask(self, mask_fn):
-        # str(masks_dir / fname.stem) + args.mask_suffix
         mask = mir.MultiResolutionImageReader().open(mask_fn)  # type: mir.MultiResolutionImage
 
-        whole_mask = mask.getLevelDimensions(self.threshold_level)
-        wsi_high_level_mask = mask.getUCharPatch(0, 0, whole_mask[0], whole_mask[1], self.threshold_level)
+        read_level = 0
+        whole_mask = mask.getLevelDimensions(read_level)
+        wsi_high_level_mask = mask.getUCharPatch(0, 0, whole_mask[0], whole_mask[1], read_level)
 
         blur = cv2.blur(wsi_high_level_mask * 255, (300, 300))
         wsi_high_level_mask = (blur > 128)
@@ -189,7 +231,7 @@ class TissueExtractor(object):
 
         self.mask = cv2.dilate(wsi_high_level_mask.astype(np.uint8), kernel, iterations=1)
 
-        self.calculate_mask_downsamples(mask)
+        self.threshold_downsample = int(round(mask.getSpacing()[0] * mask.getLevelDownsample(read_level) / self.reader.getSpacing()[0]))
 
     def bounding_box(self):
         non_zero_mask = np.where(self.mask)
@@ -286,18 +328,10 @@ class TissueExtractor(object):
 
     def remove_empty_regions(self, image, empty_rows, empty_columns):
         if empty_rows is not None:
-            empty_rows = empty_rows.astype(np.float32)
-            empty_rows *= self.diff_mask_to_read_level
-            empty_rows /= self.write_downsample
-            empty_rows = np.round(empty_rows).astype(np.uint32)
             empty_rows = np.hstack([[c for c in range(*r)] for r in empty_rows])
             image = np.delete(image, empty_rows, 0)
 
         if empty_columns is not None:
-            empty_columns = empty_columns.astype(np.float32)
-            empty_columns *= self.diff_mask_to_read_level
-            empty_columns /= self.write_downsample
-            empty_columns = np.round(empty_columns).astype(np.uint32)
             empty_columns = np.hstack([[c for c in range(*r)] for r in empty_columns])
             image = np.delete(image, empty_columns, 1)
 
@@ -309,8 +343,8 @@ class TissueExtractor(object):
         else:
             cv2.imwrite(str(fname), cv2.cvtColor(image, cv2.COLOR_BGR2RGB), [int(cv2.IMWRITE_JPEG_QUALITY), quality])
 
-def extract_tissue(file, save_dir, output_spacing):
-    extractor = TissueExtractor(save_dir, output_spacing)
+def extract_tissue(file, save_dir, masks_dir, mask_suffix, output_spacing):
+    extractor = TissueExtractor(save_dir, masks_dir, mask_suffix, output_spacing)
 
     fname = pathlib.Path(file)
     save_dir = pathlib.Path(save_dir)
@@ -326,7 +360,7 @@ if __name__ == '__main__':
     num_cores = args.num_processes
 
     if args.image:
-        extract_tissue(args.image, args.save_dir, args.output_spacing)
+        extract_tissue(args.image, args.save_dir, args.masks_dir, args.mask_suffix,  args.output_spacing)
     else:
         images_dir = pathlib.Path(args.slides_dir) if args.slides_dir else None
         if args.csv:
@@ -343,4 +377,6 @@ if __name__ == '__main__':
 
         Parallel(n_jobs=num_cores)(delayed(extract_tissue)(file,
                                                            args.save_dir,
+                                                           args.masks_dir,
+                                                           args.mask_suffix,
                                                            args.output_spacing) for file in images)

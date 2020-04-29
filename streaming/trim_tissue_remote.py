@@ -29,13 +29,14 @@ def count_docker_cpus(quota_file=None, period_file=None, log_fct=print):
 def create_parser_remote():
     parser = create_parser()
     parser.add_argument('--remote-dir', default=None, type=str, required=True)
+    parser.set_defaults(remote_dir=-1)
     return parser
 
 class TissueExtractorRemote(TissueExtractor):
     remote_dir: str = ''
 
-    def __init__(self, remote_dir='', output_spacing=1.0, threshold_downsample=32):
-        super().__init__('/home/user/temp', output_spacing, threshold_downsample)
+    def __init__(self, remote_dir='', masks_dir='', mask_suffix='', output_spacing=1.0, threshold_downsample=32):
+        super().__init__('/home/user/temp', masks_dir, mask_suffix, output_spacing, threshold_downsample)
         subprocess.check_output(["mkdir", "-p", '/home/user/temp'])
         self.remote_dir = remote_dir
 
@@ -61,8 +62,8 @@ class TissueExtractorRemote(TissueExtractor):
         except Exception as e:
             print('rsync failed with error:', e)
 
-def extract_tissue(file, remote_dir, output_spacing):
-    extractor = TissueExtractorRemote(remote_dir, output_spacing)
+def extract_tissue(file, remote_dir, masks_dir, masks_suffix, output_spacing):
+    extractor = TissueExtractorRemote(remote_dir, masks_dir, masks_suffix, output_spacing)
 
     fname = pathlib.Path(file)
     save_dir = pathlib.Path('/home/user/temp')
@@ -80,17 +81,13 @@ if __name__ == '__main__':
     print(args)
 
     num_cores = count_docker_cpus()
-    if num_cores == 0:
+    if num_cores == 0 or args.num_processes > -1:
         num_cores = args.num_processes
     else:
         print("Using number of cpu's from docker:", num_cores)
 
-    print()
-    print('---')
-    print()
-
     if args.image:
-        extract_tissue(args.image, args.remote_dir, args.output_spacing)
+        extract_tissue(args.image, args.remote_dir, args.masks_dir, args.mask_suffix, args.output_spacing)
     else:
         images_dir = pathlib.Path(args.slides_dir) if args.slides_dir else None
         if args.csv:
@@ -107,9 +104,10 @@ if __name__ == '__main__':
 
         Parallel(n_jobs=num_cores)(delayed(extract_tissue)(file,
                                                            args.remote_dir,
+                                                           args.masks_dir,
+                                                           args.mask_suffix,
                                                            args.output_spacing) for file in images)
 
-    print()
     print()
     print('Final sync - should not transfer any more files (otherwise chansey missed some..)')
     missed = True

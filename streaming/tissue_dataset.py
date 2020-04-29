@@ -8,26 +8,31 @@ import torch
 import csv
 import torch.utils.data
 import pathlib
+import os
 
-# Save memory
-pyvips.cache_set_max(0)
+# Save memory, seems to make it a wee bit slower.
+# pyvips.cache_set_max(0)
 
 # Things can get messy with big images and multi-GPU:
 cv2.setNumThreads(0)
 
 
 class TissueDataset(torch.utils.data.Dataset):
-    def __init__(self, img_size, img_dir, csv_fname, validation=False, augmentations=True, testing=False, 
-                 limit_size=-1, variable_input_shapes=False, tile_size=4096, resize=1):
+    def __init__(self, img_size, img_dir, filetype, csv_fname, validation=False, augmentations=True, 
+                 limit_size=-1, variable_input_shapes=False, tile_size=4096, resize=1, multiply_len=1, num_classes=2,
+                 regression=False):
         self.img_dir = img_dir
         self.img_size = img_size
+        self.filetype = filetype
         self.validation = validation
         self.augmentations = augmentations
         self.variable_input_shapes = variable_input_shapes
         self.tile_size = tile_size
         self.tile_delta = tile_size
-        self.testing = testing
         self.resize = resize
+        self.multiply_len = multiply_len
+        self.num_classes = num_classes
+        self.regression = regression
 
         images = []
         with open(csv_fname) as csvfile:
@@ -39,21 +44,40 @@ class TissueDataset(torch.utils.data.Dataset):
             images.pop(0)
         self.images = images
 
-        assert len(images) > 0
+        included = []
+        for i in range(len(self)):
+            fname = self.biopsy_fname_for_index(i)[0]
+            if os.path.isfile(fname):
+                included.append(self.images[i])
+            else:
+                print('WARNING', fname, 'not found, excluded!')
+
+        self.images = included
+        assert len(self.images) > 0
 
     def __getitem__(self, index):
-        img_fname, label = self.biopsy_fname_for_index(index)
+        index = index // self.multiply_len
+        img_fname, mask_fname, label = self.biopsy_fname_for_index(index)
         img = self.open_and_resize(img_fname)
-        data = self.transforms(img)
+        if os.path.isfile(mask_fname):
+            mask = np.load(mask_fname)
+        else:
+            mask = None
+        data = self.transforms(img, mask)
         del img
         return data, label
 
     def biopsy_fname_for_index(self, index):
         img_fname, label = self.images[index]
-        img_fname = pathlib.Path(self.img_dir) / pathlib.Path(img_fname)
-        img_fname = str(img_fname)
-        label = torch.tensor(int(label), dtype=torch.long)
-        return img_fname, label
+        img_path = pathlib.Path(self.img_dir) / pathlib.Path(img_fname).with_suffix(self.filetype)
+        mask_fname = pathlib.Path(self.img_dir) / pathlib.Path(img_fname + '_msk')
+        mask_path = mask_fname.with_suffix('.npy')
+        if '[' in label: 
+            label = torch.tensor(eval(label), dtype=torch.long)
+            label = torch.nn.functional.one_hot(label, num_classes=self.num_classes).sum(dim=0).float()
+        elif self.regression: label = torch.tensor(float(label), dtype=torch.float32)
+        else: label = torch.tensor(int(label), dtype=torch.long)
+        return str(img_path), str(mask_path), label
 
     def open_and_resize(self, img_fname):
         image = pyvips.Image.new_from_file(img_fname)
@@ -63,16 +87,19 @@ class TissueDataset(torch.utils.data.Dataset):
 
         return image
 
-    def transforms(self, image, save=False):
+    def transforms(self, image, mask=None, save=False):
         # which interpolation to use for each transform
-        interp = pyvips.Interpolate.new('bicubic')
+        interp = pyvips.Interpolate.new('bilinear')
 
         if not self.validation and self.augmentations:
-            image = self.random_rotate(image, interp)
             image = self.random_flip(image)
-            image = self.limit_size(image)
+            image = self.random_rotate(image, interp)
+            image = self.limit_size(image, mask)
             image = self.color_jitter(image)
             image = self.elastic_transform(image, interp)
+        elif mask is not None:
+            # use highest value in mask for validation
+            image = self.crop_using_mask(mask, image, random_index=False)
 
         # padding
         image = self.pad_image(image)
@@ -87,7 +114,7 @@ class TissueDataset(torch.utils.data.Dataset):
 
         return tensor
 
-    def pad_image(self, image):
+    def pad_image(self, image, mask=None):
         if not self.variable_input_shapes:
             image = image.gravity("centre", self.img_size, self.img_size, background=[255, 255, 255])
         else:
@@ -107,8 +134,41 @@ class TissueDataset(torch.utils.data.Dataset):
         image = image.gravity("centre", w, h, background=[255, 255, 255])
         return image
 
-    def limit_size(self, image):
-        image = image.gravity("centre", min(self.img_size, image.width), min(self.img_size, image.height), background=[255, 255, 255])
+    def limit_size(self, image, mask=None):
+        if mask is not None:
+            image = self.crop_using_mask(mask, image)
+        else:
+            image = image.gravity("centre", min(self.img_size, image.width), min(self.img_size, image.height), background=[255, 255, 255])
+
+        return image
+
+    def crop_using_mask(self, mask, image, random_index=True):
+        norm_mask = mask / np.sum(mask)
+        if random_index:
+            rand_i = np.random.choice(mask.size, p=norm_mask.flatten())
+        else:
+            rand_i = np.argmax(norm_mask.flatten())
+
+        # 'reshape' index back to 2d-coordinates
+        nrows = rand_i / mask.shape[0]
+        y = math.floor(nrows)
+        x = (rand_i - y*mask.shape[0])
+
+        # mask is 100x smaller than image
+        y, x = y * 100, x * 100  
+
+        # index is center of tile
+        y, x = y - self.img_size // 2, x - self.img_size // 2  
+
+        if x + self.img_size > image.width:
+            x = image.width - self.img_size - 1
+        if y + self.img_size > image.height:
+            y = image.height - self.img_size - 1
+
+        if x < 0: x = 0
+        if y < 0: y = 0
+
+        image = image.crop(x, y, min(image.width, self.img_size), min(image.height, self.img_size))
         return image
 
     def elastic_transform(self, image, interp):
@@ -177,4 +237,4 @@ class TissueDataset(torch.utils.data.Dataset):
         return image
 
     def __len__(self):
-        return len(self.images)
+        return len(self.images) * self.multiply_len

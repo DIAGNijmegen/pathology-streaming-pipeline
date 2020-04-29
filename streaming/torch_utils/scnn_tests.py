@@ -5,7 +5,7 @@ import torchvision
 
 from scnn import StreamingCNN, StreamingConv2d
 
-if '1.6' in torch.__version__:
+if '1.6' in torch.__version__:  # type:ignore
     from torch.cuda.amp import GradScaler
     from torch.cuda.amp import autocast
 
@@ -13,35 +13,34 @@ def test_net(stream_net, image, target, tile_size=256, convert=(), mixedprecisio
     # criterion = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.SGD(stream_net.parameters(), lr=1e-5)
 
-    sCNN = StreamingCNN(stream_net, tile_shape=(1, 3, tile_size, tile_size), verbose=False)
+    sCNN = StreamingCNN(stream_net,
+                        tile_shape=(1, 3, tile_size, tile_size),
+                        verbose=False,
+                        normalize_on_gpu=False,
+                        copy_to_gpu=True)
+
     if mixedprecision:
         sCNN.dtype = torch.half
         scaler = GradScaler(init_scale=1.0)
 
-        # stream_net, optimizer = amp.initialize(stream_net, optimizer, opt_level='O1', loss_scale=1.0, verbosity=0)  # type:ignore
-        # target.fill_(1)
-
-        # stream_net = stream_net.half()
-        # image = image.half()
-        # target = target.half()
-        # mixedprecision = False
-
     stream_net.zero_grad()
     sCNN.disable()
     sCNN.enable()
+    state_dict = sCNN.state_dict()
+    sCNN.load_state_dict(state_dict)
 
     if mixedprecision:
         with autocast():
             with torch.no_grad():
                 str_output = sCNN.forward(image)
             str_output.requires_grad = True
-            loss = torch.sum(str_output.float()) / 1e5
-        scaler.scale(loss).backward()
+            loss = torch.sum(str_output.float()) / 1e4
+        scaler.scale(loss).backward()  # type:ignore
         sCNN.backward(image, str_output.grad)
     else:
         str_output = sCNN.forward(image)
         str_output.requires_grad = True
-        loss = torch.sum(str_output.float()) / 1e5
+        loss = torch.sum(str_output.float()) / 1e4
         loss.backward()
         sCNN.backward(image, str_output.grad)
 
@@ -59,16 +58,13 @@ def test_net(stream_net, image, target, tile_size=256, convert=(), mixedprecisio
     if mixedprecision:
         with autocast(enabled=True): 
             str_output = stream_net(image[None])
-            loss = torch.sum(str_output) / 1e5
+            loss = torch.sum(str_output) / 1e4
             print(loss)
 
-        # with amp.scale_loss(loss, optimizer) as scaled_loss:  # type:ignore
-        #     scaled_loss.backward()
-
-        scaler.scale(loss).backward()
+        scaler.scale(loss).backward()  # type:ignore
     else:
         str_output = stream_net(image[None])
-        loss = torch.sum(str_output.float()) / 1e5
+        loss = torch.sum(str_output.float()) / 1e4
         loss.backward()
 
     normal_conv_gradients = []
@@ -82,10 +78,10 @@ def test_net(stream_net, image, target, tile_size=256, convert=(), mixedprecisio
     passed = True
     assert len(streaming_conv_gradients) > 0
     for i in range(len(streaming_conv_gradients)):
-        max_diff = torch.max(torch.abs(streaming_conv_gradients[i].data - normal_conv_gradients[i].data))
+        max_diff = torch.max(torch.abs(streaming_conv_gradients[i].data - normal_conv_gradients[i].data))  # type:ignore
         if verbose:
             print("Conv layer", i, "\t max diff between gradients:", float(max_diff))
-            # print('Max str', torch.max(streaming_conv_gradients[i].data).item(), 'max norm', torch.max(normal_conv_gradients[i].data).item())
+            print('Max str', torch.max(streaming_conv_gradients[i].data).item(), 'max norm', torch.max(normal_conv_gradients[i].data).item())
         if not mixedprecision and max_diff > 1e-12: passed = False
         elif mixedprecision and max_diff > 1e-2: passed = False
     return passed
@@ -171,10 +167,12 @@ if __name__ == '__main__':
     if passed: print("mobilenetv2 very small (128 x 256) image-size tests passed")
     else: print("!! mobilenetv2 very small (800 x 256) image-size tests did NOT pass")
 
-    if '1.6' in torch.__version__:
+    if '1.6' in torch.__version__:  # type:ignore
         print("")
         print("Testing mixed precision resnet-34")
         image = torch.FloatTensor(3, 1024, 1024).normal_(0, 1).cuda()  # type:ignore
+        image = image.cuda().float()
+        target = target.cuda().float()
         net = torchvision.models.resnet34(pretrained=True).cuda()
         stream_net = torch.nn.Sequential(net.conv1, net.bn1, net.relu, net.maxpool, net.layer1)
         for l in stream_net.modules():
@@ -186,4 +184,3 @@ if __name__ == '__main__':
         print("")
     else:
         print("Skipping mixed precision test, older pytorch version")
-

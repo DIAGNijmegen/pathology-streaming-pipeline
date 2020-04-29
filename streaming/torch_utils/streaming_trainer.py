@@ -21,13 +21,20 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
         super().__init__(options)
         for l in self.freeze: l.eval()
         if sCNN is None:
+            # if os.path.isfile('cache'+str(options.tile_shape)):
+            #     state_dict = torch.load('cache'+str(options.tile_shape))
+            # else: 
+            state_dict = None
             self.sCNN = StreamingCNN(self.checkpointed_net,
                                      self.tile_shape,
                                      verbose=False,
                                      copy_to_gpu=True,
                                      statistics_on_cpu=True,
-                                     normalize_on_gpu=options.normalize_on_gpu)
+                                     normalize_on_gpu=options.normalize_on_gpu,
+                                     state_dict=state_dict)
             self.sCNN.disable()
+            # if state_dict is None:
+            #     torch.save(self.sCNN.state_dict(), 'cache'+str(options.tile_shape))
         else:
             self.sCNN = sCNN
 

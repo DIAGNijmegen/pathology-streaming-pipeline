@@ -5,6 +5,7 @@ import dataclasses
 import numpy as np
 import torch
 import torch.distributed as dist
+import pathlib
 
 if '1.6' in torch.__version__:  # type:ignore
     from torch.cuda.amp import autocast
@@ -16,7 +17,7 @@ class TrainerOptions:
     dataloader: torch.utils.data.DataLoader = None  # type:ignore
     optimizer: torch.optim.Optimizer = None  # type:ignore
     criterion: torch.nn.CrossEntropyLoss = None  # type:ignore
-    save_dir: str = ''
+    save_dir: pathlib.Path = None  # type:ignore
     freeze: list = dataclasses.field(default_factory=list)
     accumulate_over_n_batches: int = 1
     distributed: bool = False
@@ -25,6 +26,8 @@ class TrainerOptions:
     test_time_bn: bool = False
     dtype: torch.dtype = torch.float32
     mixedprecision: bool = False
+    multilabel: bool = False 
+    regression: bool = False
 
 class Trainer():
     def __init__(self, options: TrainerOptions):
@@ -43,7 +46,9 @@ class Trainer():
         if self.distributed: self.config_distributed(self.n_gpus, self.gpu_rank)
         self.mixedprecision = options.mixedprecision
         if self.mixedprecision:
-            self.grad_scaler = GradScaler(init_scale=4096, growth_interval=4)
+            self.grad_scaler = GradScaler(init_scale=4096*2, growth_interval=4)
+        self.multilabel = options.multilabel
+        self.regression = options.regression
         self.reset_epoch_stats()
 
     def config_distributed(self, n_gpus, gpu_rank=None):
@@ -92,8 +97,8 @@ class Trainer():
         self.all_predictions = []
         self.all_labels = []
 
-    def accumulate_batch_stats(self, loss, accuracy, predictions, labels):
-        self.accumulated_loss += loss * len(labels)
+    def save_batch_stats(self, loss, accuracy, predictions, labels):
+        self.accumulated_loss += float(loss) * len(labels)
         self.accumulated_accuracy += accuracy * len(labels)
         self.batches_evaluated += 1
         self.images_evaluated += len(labels)
@@ -155,7 +160,8 @@ class Trainer():
 
     def evaluate_full_dataloader(self, batch_callback):
         for x, y in self.dataloader:
-            loss, accuracy, _ = self.evaluate_batch_and_accumulate_stats(x, y)
+            loss, accuracy, predictions = self.evaluate_batch(x, y)
+            self.save_batch_stats(loss, accuracy, predictions, y.cpu().numpy())
             batch_callback(self, self.batches_evaluated, loss, accuracy)
 
     def forward_batch(self, x, y):
@@ -165,7 +171,6 @@ class Trainer():
     def forward_batch_with_loss(self, x, y):
         output = self.forward_batch(x, y)
         label = y.cuda()
-        from pdb import set_trace; set_trace()
         loss = self.criterion(output, label)
         return output, loss
 
@@ -180,14 +185,9 @@ class Trainer():
         # NOTE: removed a `del output` here, could cause memory issues
         return loss, accuracy, output.numpy()
 
-    def evaluate_batch_and_accumulate_stats(self, x, y):
-        loss, accuracy, predictions = self.evaluate_batch(x, y)
-        detached_loss = float(loss.data)
-        self.accumulate_batch_stats(detached_loss, accuracy, predictions, y.cpu().numpy())
-        return loss, accuracy, predictions
-
     def train_on_batch_and_accumulate_stats(self, x, y):
-        loss, accuracy, predictions = self.evaluate_batch_and_accumulate_stats(x, y)
+        loss, accuracy, predictions = self.evaluate_batch(x, y)
+        self.save_batch_stats(loss, accuracy, predictions, y.cpu().numpy())
         loss = loss / self.accumulate_over_n_batches / self.n_gpus
         if self.mixedprecision:
             self.grad_scaler.scale(loss).backward()
@@ -228,29 +228,29 @@ class Trainer():
         state.update(additional)
         print('Saving', 'checkpoint_' + name + '_' + str(epoch) + '_network')
         try:
-            torch.save(state, self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network')
-            torch.save(state, self.save_dir + 'checkpoint_' + name + '_last')
+            torch.save(state, self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'))
+            torch.save(state, self.save_dir / pathlib.Path('checkpoint_' + name + '_last'))
         except Exception as e:
             print('WARNING: Network not stored', e)
 
     def checkpoint_available_for_name(self, name, epoch=None):
         if epoch:
-            print(self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network')
-            print(os.path.isfile(self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network'))
-            return os.path.isfile(self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network')
+            print(self.save_dir / 'checkpoint_' + name + '_' + str(epoch) + '_network')
+            print(os.path.isfile(self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network')))
+            return os.path.isfile(self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'))
         else:
-            return os.path.isfile(self.save_dir + 'checkpoint_' + name + '_last')
+            return os.path.isfile(self.save_dir / pathlib.Path('checkpoint_' + name + '_last'))
 
     def load_network_checkpoint(self, name):
-        state = torch.load(self.save_dir + 'checkpoint_' + name)
+        state = torch.load(self.save_dir / pathlib.Path('checkpoint_' + name))
         self.load_state_dict(state)
 
     def load_checkpoint(self, name, epoch=None):
         if epoch:
-            state = torch.load(self.save_dir + 'checkpoint_' + name + '_' + str(epoch) + '_network',
-                               map_location=lambda storage, loc: storage)
+            state = torch.load(self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'),
+                               map_location=lambda storage, loc: storage),
         else:
-            state = torch.load(self.save_dir + 'checkpoint_' + name + '_last',
+            state = torch.load(self.save_dir / pathlib.Path('checkpoint_' + name + '_last'),
                                map_location=lambda storage, loc: storage)
 
         return state
@@ -268,18 +268,15 @@ class Trainer():
         return False, None
 
     def accuracy_with_predictions(self, predictions, labels):
-        if predictions.shape[1] == 1:
+        if self.regression:
+            return 0
+        if self.multilabel:
+            equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels.numpy() == 1)
+            equal_c = np.sum(equal, axis=1)
+            equal = (equal_c == labels.shape[1]).sum()
+        elif predictions.shape[1] == 1:
             equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels)
         else:
-            if len(predictions.shape) < 4: dim = 0
-            else: dim = 1
-            equal = np.equal(np.argmax(torch.softmax(predictions.float(), dim=dim), axis=1), labels)
+            equal = np.equal(np.argmax(torch.softmax(predictions.float(), dim=1), axis=1), labels)
         return float(equal.sum()) / float(len(predictions))
-
-class MultiClassTrainer(Trainer):
-    def accuracy_with_predictions(self, predictions, labels):
-        equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels.numpy() == 1)
-        equal_c = np.sum(equal, axis=1)
-        correct = (equal_c == labels.shape[1]).sum()
-        return correct / len(predictions)
 
