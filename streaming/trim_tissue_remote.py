@@ -5,6 +5,7 @@ import numpy as np
 from joblib import Parallel, delayed
 import subprocess
 import math
+import os
 
 import sys
 from trim_tissue import TissueExtractor, create_parser
@@ -49,6 +50,13 @@ class TissueExtractorRemote(TissueExtractor):
         super().write_img(image, fname, quality)
         self.rsync_file(fname)
 
+    def extract_file(self, file, fname, suffix='.jpg'):
+        remote_fname = pathlib.Path(self.remote_dir) / fname.stem
+        if os.path.isfile(remote_fname.with_suffix(suffix)):
+            print('Already exist', file, remote_fname.with_suffix(suffix))
+            return
+        super().extract_file(file, fname, suffix)
+
     def rsync_file(self, fname):
         try:
             subprocess.check_output(["rsync", "-vru", fname, self.remote_dir])
@@ -85,6 +93,9 @@ if __name__ == '__main__':
         num_cores = args.num_processes
     else:
         print("Using number of cpu's from docker:", num_cores)
+
+    # kick gcluster
+    files = subprocess.check_output(["ls", args.remote_dir])
 
     if args.image:
         extract_tissue(args.image, args.remote_dir, args.masks_dir, args.mask_suffix, args.output_spacing)

@@ -523,7 +523,7 @@ class StreamingCNN(object):
         # The input image is likely quite small in terms of channels, for
         # performance reasons it is beneficial to copy to the GPU as a whole
         # instead of tile-by-tile.
-        image = image[None]
+        image = image
         if self.copy_to_gpu:
             image = image.to(self.device, non_blocking=True)
 
@@ -542,11 +542,11 @@ class StreamingCNN(object):
         output_height = (image.shape[H_DIM] - self.tile_shape[H_DIM]) // self.output_stride[1] + self._tile_output_shape[H_DIM]
         output_width = (image.shape[W_DIM] - self.tile_shape[W_DIM]) // self.output_stride[2] + self._tile_output_shape[W_DIM]
 
-        output = torch.empty((1, self._tile_output_shape[1], output_height, output_width), dtype=self.dtype, device=self.device).fill_(999)
+        output = torch.empty((image.shape[0], self._tile_output_shape[1], output_height, output_width), dtype=self.dtype, device=self.device).fill_(999)
 
         n_rows = math.ceil(float(output_height) / float(valid_output_height))
         n_cols = math.ceil(float(output_width) / float(valid_output_width))
-
+        
         if image.shape[W_DIM] <= tile_width: n_cols = 1
         if image.shape[H_DIM] <= tile_height: n_rows = 1
 
@@ -639,7 +639,7 @@ class StreamingCNN(object):
         # The input image is likely quite small in terms of channels, for
         # performance reasons it is beneficial to copy to the GPU as a whole
         # instead of tile-by-tile.
-        image = image[None]
+        image = image
         if self.copy_to_gpu:
             image = image.to(self.device, non_blocking=True)
         grad = grad
@@ -661,6 +661,11 @@ class StreamingCNN(object):
 
         n_rows = math.ceil(float(height - grad_lost.top - grad_lost.bottom) / float(valid_grad_height))
         n_cols = math.ceil(float(width - grad_lost.left - grad_lost.right) / float(valid_grad_width))
+
+        if self.verbose:
+            ideal_tile_size = height / float(n_rows) + grad_lost.top + grad_lost.bottom        
+            next_ideal_tile_size = height / float(n_rows - 1) + grad_lost.top + grad_lost.bottom        
+            print(ideal_tile_size, n_rows*n_cols, next_ideal_tile_size) 
 
         if image.shape[W_DIM] <= tile_width: n_cols = 1
         if image.shape[H_DIM] <= tile_height: n_rows = 1

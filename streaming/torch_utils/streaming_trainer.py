@@ -27,11 +27,12 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
             state_dict = None
             self.sCNN = StreamingCNN(self.checkpointed_net,
                                      self.tile_shape,
-                                     verbose=False,
+                                     verbose=True,
                                      copy_to_gpu=True,
                                      statistics_on_cpu=True,
                                      normalize_on_gpu=options.normalize_on_gpu,
                                      state_dict=state_dict)
+            self.sCNN.verbose = False
             self.sCNN.disable()
             # if state_dict is None:
             #     torch.save(self.sCNN.state_dict(), 'cache'+str(options.tile_shape))
@@ -63,17 +64,17 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
     def stream_image_forward(self, x):
         if isinstance(self.checkpointed_net, torch.nn.Sequential):
             if len(self.checkpointed_net) > 0:
-                output = self.sCNN.forward(x[0])
+                output = self.sCNN.forward(x)
                 return output
             else:
                 return x
         else:
-            return self.sCNN.forward(x[0])
+            return self.sCNN.forward(x)
 
     def backward_batch_checkpointed(self, fmap_grad):
         if self.train_streaming_layers:
             for i, x in enumerate(self.batch_images):
-                self.sCNN.backward(x[0], fmap_grad[i][None])
+                self.sCNN.backward(x, fmap_grad[i][None])
 
 class CheckpointedStreamingMultiClassTrainer(StreamingCheckpointedTrainer):
     def accuracy_with_predictions(self, predictions, labels):

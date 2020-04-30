@@ -298,6 +298,10 @@ class Experiment(object):
                          ("Val", avg_loss, avg_acc, loss))
 
     def _configure_optimizer(self):
+        params = self._get_trainable_params()
+        self.optimizer = torch.optim.SGD(params, lr=self.settings.lr, momentum=0.9)
+
+    def _get_trainable_params(self):
         if self.settings.train_all_layers:
             params = list(self.stream_net.parameters()) + list(self.net.parameters())
         else:
@@ -308,15 +312,14 @@ class Experiment(object):
             else:
                 params = list(self.stream_net[-1].parameters()) + list(self.net.parameters())
                 for param in self.stream_net[:-1].parameters(): param.requires_grad = False
-
-        self.optimizer = torch.optim.SGD(params, lr=self.settings.lr, momentum=0.9)
+        return params
 
     def _configure_trainers(self):
         options = StreamingTrainerOptions()
         options.dataloader = self.train_loader
         options.net = self.net
         options.optimizer = self.optimizer
-        options.criterion = self.loss
+        options.criterion = self.loss  # type:ignore
         options.save_dir = pathlib.Path(self.settings.save_dir)
         options.checkpointed_net = self.stream_net
         options.batch_size = self.settings.batch_size
@@ -497,9 +500,9 @@ class Experiment(object):
     def _enable_mixed_precision_if_needed(self):
         if self.settings.mixedprecision:
             if isinstance(self.trainer, StreamingCheckpointedTrainer):
-                self.trainer.sCNN.dtype = torch.uint8
+                self.trainer.sCNN.dtype = torch.half
                 self.trainer.mixedprecision = True
-                self.trainer.dtype = torch.half  # not needed, but saves memory
+                self.trainer.dtype = torch.uint8  # not needed, but saves memory
             if isinstance(self.validator, StreamingCheckpointedTrainer):
                 self.validator.sCNN.dtype = torch.half
                 self.validator.mixedprecision = True

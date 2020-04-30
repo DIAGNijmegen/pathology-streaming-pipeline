@@ -3,6 +3,7 @@ import math
 import pathlib
 
 import cv2
+import os
 import numpy as np
 from joblib import Parallel, delayed
 
@@ -97,6 +98,10 @@ class TissueExtractor(object):
 
     def extract_file(self, file, fname, suffix='.jpg'):
         print(file)
+        if os.path.isfile(fname.with_suffix(suffix)):
+            print('Already exist', file, fname.with_suffix(suffix))
+            return
+
         self.open_slide(file)
         self.calculate_read_level()
         self.create_mask(fname)
@@ -119,11 +124,18 @@ class TissueExtractor(object):
         print('Wrote', fname.with_suffix(suffix))
 
     def create_mask(self, fname):
+        maskfn = None
         if self.masks_dir:
             maskfn = str(self.masks_dir / fname.stem) + self.mask_suffix
-            self.read_threshold_mask(maskfn)
-        else: 
-            maskfn = None
+            if os.path.isfile(maskfn):
+                self.read_threshold_mask(maskfn)
+                non_zero_mask = np.where(self.mask)
+                if len(non_zero_mask[0]) == 0:
+                    print(fname.stem, '! WARNING: mask is empty, generating based on thresholding tissue')
+                    maskfn = None
+            else:
+                print(fname.stem, '! WARNING: mask file does not exist, generating based on thresholding tissue')
+                maskfn = None
 
         self.calculate_threshold_level()
         self.calculate_downsamples()
