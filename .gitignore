@@ -6,7 +6,6 @@
 /install_gluster.sh
 /notes.md
 /regnet.py
-/run_exp.sh
 /time_vips.py
 /torch_utils/MIL_trainer.py
 /torch_utils/scnn_old.py
