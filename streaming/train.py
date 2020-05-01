@@ -1,6 +1,7 @@
 import argparse
 import dataclasses
 import pathlib
+import math
 
 import numpy as np
 import torch
@@ -120,7 +121,6 @@ class Experiment(object):
 
         self.world_size = world_size
         self.distributed = distributed
-        self.dtype = torch.float32
 
         if self.settings.mixedprecision and not self.settings.train_all_layers:
             self.settings.train_streaming_layers = False
@@ -285,7 +285,7 @@ class Experiment(object):
         if self.verbose and self.settings.progressbar:
             avg_acc = evaluator.average_epoch_accuracy()
             avg_loss = evaluator.average_epoch_loss()
-            progress_bar(batches_evaluated, len(self.train_dataset),
+            progress_bar(batches_evaluated, math.ceil(len(self.train_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Train", avg_loss, avg_acc, loss))
 
@@ -293,7 +293,7 @@ class Experiment(object):
         if self.verbose and self.settings.progressbar:
             avg_acc = evaluator.average_epoch_accuracy()
             avg_loss = evaluator.average_epoch_loss()
-            progress_bar(batches_evaluated, len(self.validation_dataset),
+            progress_bar(batches_evaluated, math.ceil(len(self.validation_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Val", avg_loss, avg_acc, loss))
 
@@ -305,7 +305,7 @@ class Experiment(object):
         if self.settings.train_all_layers:
             params = list(self.stream_net.parameters()) + list(self.net.parameters())
         else:
-            print('WARNING: optimizer only training last params of stream_net!')
+            print('WARNING: optimizer only training last params of network!')
             if self.settings.mixedprecision:
                 params = list(self.net.parameters())
                 for param in self.stream_net.parameters(): param.requires_grad = False
@@ -329,7 +329,7 @@ class Experiment(object):
         options.distributed = self.distributed
         options.freeze = self.freeze_layers
         options.tile_shape = (1, 3, self.settings.tile_size, self.settings.tile_size)
-        options.dtype = self.dtype
+        options.dtype = torch.uint8  # not needed, but saves memory
         options.train_streaming_layers = self.settings.train_streaming_layers
         options.mixedprecision = self.settings.mixedprecision
         options.normalize_on_gpu = self.settings.normalize_on_gpu
@@ -387,7 +387,7 @@ class Experiment(object):
         net.fc.bias.data.fill_(0)  # type:ignore
         net.avgpool = torch.nn.AdaptiveMaxPool2d(1)
         net.cuda()
-        net = net.type(self.dtype)
+        # net = net.type(self.dtype)
         return net
 
     def _freeze_bn_layers(self):
@@ -502,11 +502,9 @@ class Experiment(object):
             if isinstance(self.trainer, StreamingCheckpointedTrainer):
                 self.trainer.sCNN.dtype = torch.half
                 self.trainer.mixedprecision = True
-                self.trainer.dtype = torch.uint8  # not needed, but saves memory
             if isinstance(self.validator, StreamingCheckpointedTrainer):
                 self.validator.sCNN.dtype = torch.half
                 self.validator.mixedprecision = True
-                self.trainer.dtype = torch.uint8  # not needed, but saves memory
 
     def _log_details(self, net):
         if self.verbose:
