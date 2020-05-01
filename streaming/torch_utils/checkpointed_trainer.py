@@ -138,7 +138,8 @@ class CheckpointedTrainer(Trainer):
         return labels, fmap
 
     def should_finish_batch_on_gpu(self):
-        return not self.distributed or (self.gpu_rank == 0 and self.gather_batch_on_one_gpu)
+        return not self.distributed or (self.gpu_rank == 0 and self.gather_batch_on_one_gpu) or \
+            not self.gather_batch_on_one_gpu
 
     def evaluate_on_accumulated_batch(self):
         labels, fmap = self.accumulate_batch()
