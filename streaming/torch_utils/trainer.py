@@ -278,5 +278,5 @@ class Trainer():
             equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels)
         else:
             equal = np.equal(np.argmax(torch.softmax(predictions.float(), dim=1), axis=1), labels)
-        return float(equal.sum()) / float(len(predictions))
+        return float(equal.sum()) / float(predictions.shape[0])
 
