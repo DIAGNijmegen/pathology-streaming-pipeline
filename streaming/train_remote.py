@@ -128,10 +128,9 @@ class RemoteExperiment(Experiment):
             avg_acc = evaluator.average_epoch_accuracy()
             avg_loss = evaluator.average_epoch_loss()
             if self.settings.wandb_key:
-                wandb.log({'epoch': self.epoch, 'train/accuracy_batch': accuracy})
-                wandb.log({'epoch': self.epoch, 'train/loss_batch': loss})
                 if self.settings.mixedprecision:
-                    wandb.log({'grad-scale': self.trainer.grad_scaler.get_scale()})
+                    try: wandb.log({'grad-scale': self.trainer.grad_scaler.get_scale()})
+                    except: pass
             progress_bar(batches_evaluated, math.ceil(len(self.train_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Train", avg_loss, avg_acc, loss))
@@ -140,9 +139,6 @@ class RemoteExperiment(Experiment):
         if self.verbose and self.settings.progressbar:
             avg_acc = evaluator.average_epoch_accuracy()
             avg_loss = evaluator.average_epoch_loss()
-            if self.settings.wandb_key:
-                wandb.log({'epoch': self.epoch, 'val/accuracy_batch': accuracy})
-                wandb.log({'epoch': self.epoch, 'val/loss_batch': loss})
             progress_bar(batches_evaluated, math.ceil(len(self.validation_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Val", avg_loss, avg_acc, loss))
@@ -150,14 +146,18 @@ class RemoteExperiment(Experiment):
     def log_train_metrics(self, preds, gt, e):
         super().log_train_metrics(preds, gt, e)
         if self.settings.wandb_key and self.verbose:
-            wandb.log({'epoch': self.epoch, 'train/accuracy_epoch': self.trainer.average_epoch_accuracy()})
-            wandb.log({'epoch': self.epoch, 'train/loss_epoch': self.trainer.average_epoch_loss()})
+            try:
+                wandb.log({'epoch': self.epoch, 'train/accuracy_epoch': self.trainer.average_epoch_accuracy()})
+                wandb.log({'epoch': self.epoch, 'train/loss_epoch': self.trainer.average_epoch_loss()})
+            except: pass
 
     def log_eval_metrics(self, preds, gt, e):
         super().log_eval_metrics(preds, gt, e)
         if self.settings.wandb_key and self.verbose:
-            wandb.log({'epoch': self.epoch, 'val/accuracy_epoch': self.validator.average_epoch_accuracy()})
-            wandb.log({'epoch': self.epoch, 'val/loss_epoch': self.validator.average_epoch_loss()})
+            try:
+                wandb.log({'epoch': self.epoch, 'val/accuracy_epoch': self.validator.average_epoch_accuracy()})
+                wandb.log({'epoch': self.epoch, 'val/loss_epoch': self.validator.average_epoch_loss()})
+            except: pass
 
 if __name__ == "__main__":
     distributed = (torch.cuda.device_count() > 1)
