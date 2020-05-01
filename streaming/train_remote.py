@@ -1,17 +1,20 @@
 import dataclasses
-import os
-import subprocess
 import glob
-import pyvips
-from tqdm import tqdm
+import os
+import math
+import subprocess
+from io import StringIO
+from subprocess import PIPE, Popen
 
 import numpy as np
+import PIL
+import pyvips
 import torch
 import torch.hub
 import torch.utils
 import torch.utils.data
 import wandb
-import PIL
+from tqdm import tqdm
 
 from streaming.torch_utils.utils import progress_bar
 from streaming.train import Experiment, ExperimentOptions
@@ -44,16 +47,28 @@ class RemoteExperiment(Experiment):
     def copy_data(self):
         print("Copying data")
 
-        # kick gluster
-        subprocess.check_output(["ls", self.settings.data_dir])
-
         rsync_param = "-av"
         ddir = self.settings.data_dir
         cdir = self.settings.copy_dir
         if not os.path.isdir(cdir):
             os.makedirs(cdir)
         command = f"rsync {rsync_param} --info=progress2 --info=name0 {ddir}/ {cdir}"
-        subprocess.call(command, shell=True)
+
+        retry = True 
+        while retry:
+            # kick gluster
+            subprocess.check_output(["ls", self.settings.data_dir])
+            retry = False
+            with Popen(command.split(' '), stdout=PIPE, bufsize=1, universal_newlines=True) as p, \
+                 StringIO() as buf:
+                i = 0
+                for line in p.stdout:
+                    if i % 100 == 0:
+                        print(line, end='')
+                    i += 1
+                    if 'vanished' in line: retry = True
+                    buf.write(line)  # type:ignore
+
         print("Copying done")
 
     def convert_to_pyvips(self):
@@ -76,33 +91,32 @@ class RemoteExperiment(Experiment):
             # self._log_test_image()
 
     def _log_test_image(self):
-        augmented_image, label = self.train_dataset[0]
-        augmented_image = augmented_image.numpy()
-        augmented_image = augmented_image.transpose(1, 2, 0)
-        augmented_image = PIL.Image.fromarray(augmented_image)
-        augmented_image = augmented_image.resize((512, 512))
-        wandb.log({'data/example_train_image': [wandb.Image(augmented_image, caption=str(label))]})
+        counter = 0
+        images = []
+        print('Sending test images to wandb...')
+        for image, label in self.train_loader:
+            augmented_image = image[0].numpy()
+            augmented_image = augmented_image.transpose(1, 2, 0)
+            augmented_image = PIL.Image.fromarray(augmented_image)
+            augmented_image = augmented_image.resize((512, 512))
+            images.append(wandb.Image(augmented_image, caption=str(label)))
+            del augmented_image
+            counter += 1
+            if counter == 3: break
+        wandb.log({'data/example_train_image': images})
 
-        augmented_image, label = self.train_dataset[-1]
-        augmented_image = augmented_image.numpy()
-        augmented_image = augmented_image.transpose(1, 2, 0)
-        augmented_image = PIL.Image.fromarray(augmented_image)
-        augmented_image = augmented_image.resize((512, 512))
-        wandb.log({'data/example_train_image': [wandb.Image(augmented_image, caption=str(label))]})
-
-        augmented_image, label = self.validation_dataset[0]
-        augmented_image = augmented_image.numpy()
-        augmented_image = augmented_image.transpose(1, 2, 0)
-        augmented_image = PIL.Image.fromarray(augmented_image)
-        augmented_image = augmented_image.resize((512, 512))
-        wandb.log({'data/example_val_image': [wandb.Image(augmented_image, caption=str(label))]})
-
-        augmented_image, label = self.validation_dataset[-1]
-        augmented_image = augmented_image.numpy()
-        augmented_image = augmented_image.transpose(1, 2, 0)
-        augmented_image = PIL.Image.fromarray(augmented_image)
-        augmented_image = augmented_image.resize((512, 512))
-        wandb.log({'data/example_val_image': [wandb.Image(augmented_image, caption=str(label))]})
+        counter = 0
+        images = []
+        for image, label in self.validation_loader:
+            augmented_image = image[0].numpy()
+            augmented_image = augmented_image.transpose(1, 2, 0)
+            augmented_image = PIL.Image.fromarray(augmented_image)
+            augmented_image = augmented_image.resize((512, 512))
+            images.append(wandb.Image(augmented_image, caption=str(label)))
+            del augmented_image
+            counter += 1
+            if counter == 3: break
+        wandb.log({'data/example_val_image': images})
 
     def _get_dataset(self, validation, csv_file):
         self.settings.data_dir = self.settings.copy_dir
@@ -116,7 +130,9 @@ class RemoteExperiment(Experiment):
             if self.settings.wandb_key:
                 wandb.log({'epoch': self.epoch, 'train/accuracy_batch': accuracy})
                 wandb.log({'epoch': self.epoch, 'train/loss_batch': loss})
-            progress_bar(batches_evaluated, len(self.train_dataset),
+                if self.settings.mixedprecision:
+                    wandb.log({'grad-scale': self.trainer.grad_scaler.get_scale()})
+            progress_bar(batches_evaluated, math.ceil(len(self.train_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Train", avg_loss, avg_acc, loss))
 
@@ -127,7 +143,7 @@ class RemoteExperiment(Experiment):
             if self.settings.wandb_key:
                 wandb.log({'epoch': self.epoch, 'val/accuracy_batch': accuracy})
                 wandb.log({'epoch': self.epoch, 'val/loss_batch': loss})
-            progress_bar(batches_evaluated, len(self.validation_dataset),
+            progress_bar(batches_evaluated, math.ceil(len(self.validation_dataset) / self.world_size),
                          '%s loss: %.3f, acc: %.3f, b loss: %.3f' %
                          ("Val", avg_loss, avg_acc, loss))
 
