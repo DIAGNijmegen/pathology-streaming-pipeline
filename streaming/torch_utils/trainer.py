@@ -203,7 +203,7 @@ class Trainer():
             if self.mixedprecision:
                 self.grad_scaler.step(self.optimizer)
                 self.grad_scaler.update()
-                print('Grad-scaler loss scale:', self.grad_scaler.get_scale())
+                # print('Grad-scaler loss scale:', self.grad_scaler.get_scale())
                 # prohibit scales larger than 65536, training crashes, 
                 # maybe due to gradient accumulation?
                 if self.grad_scaler.get_scale() > 65536.0:
