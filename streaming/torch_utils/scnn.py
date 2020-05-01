@@ -131,7 +131,8 @@ class StreamingConv2dF(torch.autograd.Function):
             else:
                 # with autocast(enabled=False): ?
                 grad_in = cpp_functions.backward_input(inpt.shape, grad_output, weight.to(inpt.dtype), stride, 
-                                                      padding, dilation, groups, True, False)
+                                                       padding, dilation, groups, 
+                                                       torch.backends.cudnn.benchmark, torch.backends.cudnn.deterministic)
         else:
             grad_in = None
 
