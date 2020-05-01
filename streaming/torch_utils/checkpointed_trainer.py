@@ -159,6 +159,7 @@ class CheckpointedTrainer(Trainer):
 
     def check_networks_stats(self):
         if self.distributed: check_params_distributed(self.checkpointed_net, self.n_gpus, self.gpu_rank)
+        if self.distributed: check_params_distributed(self.net, self.n_gpus, self.gpu_rank)
 
     def train_on_accumulated_batch(self):
         loss, accuracy, fmap = self.evaluate_on_accumulated_batch()
