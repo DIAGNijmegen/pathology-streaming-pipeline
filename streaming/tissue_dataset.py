@@ -53,6 +53,8 @@ class TissueDataset(torch.utils.data.Dataset):
                 print('WARNING', fname, 'not found, excluded!')
 
         self.images = included
+        if limit_size > -1:
+            self.images = self.images[0:limit_size]
         assert len(self.images) > 0
 
     def __getitem__(self, index):
