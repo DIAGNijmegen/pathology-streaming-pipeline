@@ -32,6 +32,8 @@ echo '=========== Installing pytorch nightly'
 echo 'user' | sudo -S pip3.7 install -U --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu101/torch_nightly.html > /dev/null 2>&1
 
 export PYTHONPATH=$PYTHONPATH:/mnt/netcache/pathology/projects/pathology-streaming-pipeline
+export OMP_NUM_THREADS=3
+export WANDB_DISABLE_CODE=true
 
 if [ -z "$1" ]; then
     echo "No argument supplied"
