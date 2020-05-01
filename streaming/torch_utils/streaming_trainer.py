@@ -27,7 +27,7 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
             state_dict = None
             self.sCNN = StreamingCNN(self.checkpointed_net,
                                      self.tile_shape,
-                                     verbose=True,
+                                     verbose=(self.gpu_rank == 0),
                                      copy_to_gpu=True,
                                      statistics_on_cpu=True,
                                      normalize_on_gpu=options.normalize_on_gpu,
