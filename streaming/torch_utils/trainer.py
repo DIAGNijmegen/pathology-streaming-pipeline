@@ -272,11 +272,10 @@ class Trainer():
             return 0
         if self.multilabel:
             equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels.numpy() == 1)
-            equal_c = np.sum(equal, axis=1)
-            equal = (equal_c == labels.shape[1]).sum()
+            equal = np.array(equal == labels)
         elif predictions.shape[1] == 1:
             equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels)
         else:
             equal = np.equal(np.argmax(torch.softmax(predictions.float(), dim=1), axis=1), labels)
-        return float(equal.sum()) / float(predictions.shape[0])
+        return float(equal.sum()) / float(predictions.shape[1])
 
