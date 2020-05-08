@@ -74,7 +74,7 @@ class TissueDataset(torch.utils.data.Dataset):
         img_path = pathlib.Path(self.img_dir) / pathlib.Path(img_fname).with_suffix(self.filetype)
         mask_fname = pathlib.Path(self.img_dir) / pathlib.Path(img_fname + '_msk')
         mask_path = mask_fname.with_suffix('.npy')
-        if '[' in label: 
+        if ';' in label:
             label = torch.tensor(eval('[' + label.replace(';', ',') + ']'), dtype=torch.long)
             label = torch.nn.functional.one_hot(label, num_classes=self.num_classes).sum(dim=0).float()
         elif self.regression: label = torch.tensor(float(label), dtype=torch.float32)
