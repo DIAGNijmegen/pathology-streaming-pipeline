@@ -271,8 +271,8 @@ class Trainer():
         if self.regression:
             return 0
         if self.multilabel:
-            equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels.numpy() == 1)
-            equal = np.array(equal == labels)
+            pred_sigmoid = np.round(torch.sigmoid(predictions.float()))
+            equal = np.array(pred_sigmoid == labels)
         elif predictions.shape[1] == 1:
             equal = np.equal(np.round(torch.sigmoid(predictions.float())), labels)
         else:
