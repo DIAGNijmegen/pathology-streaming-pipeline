@@ -52,7 +52,7 @@ TRAIN_2,1
 ### 1. Prepare data
 
 ```bash
-python trim_tissue.py \
+python streaming/trim_tissue.py \
     --csv='' \
     --slide-dir='' \
     --filetype='tif' \
@@ -62,7 +62,7 @@ python trim_tissue.py \
 
 ### 2. Train network!
 ```bash
-python train.py \
+python streaming/train.py \
     --name=test-name \
     --train_csv='train.csv' \
     --val_csv='val.csv' \
