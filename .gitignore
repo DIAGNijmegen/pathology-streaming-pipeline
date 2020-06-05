@@ -1,0 +1,15 @@
+/sync.sh
+/anynet.py
+/chain_test.py
+/convert_vips.py
+/dataset_classification_normo_leuko_data.csv
+/install_gluster.sh
+/notes.md
+/regnet.py
+/time_vips.py
+/torch_utils/MIL_trainer.py
+/torch_utils/scnn_old.py
+/train.csv
+/val.csv
+/wandb_log.py
+/.vim/
