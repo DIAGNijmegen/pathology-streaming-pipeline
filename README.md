@@ -11,13 +11,23 @@ Papers until now about this method:
 - Full paper (in review; arXiv preprint): http://arxiv.org/abs/1911.04432
 - MIDL 2018 (abstract, proof of concept): https://openreview.net/forum?id=HJ7lIcjoM
 
+## Requirements
+**Packages:**
+- Install [libvips](https://libvips.github.io/libvips/install.html) 
+- See requirements.txt, install via ` pip install -r requirements.txt`
+- Make sure the repo is in your pythonpath
+
+**Hardware requirements:**
+ - GPU with 11 GB memory (smaller could work with smaller tile-sizes)
+ - Preferably 32+ GB RAM (go for less workers when you have less memory available)
+ 
 ## Network
 
-For now, only the *ResNet-34* implementation is checked. Other networks could be implemented.
+For now, only the *ResNet-34* implementation is checked. Other networks could be implemented (please make an issue, I can help).
 
 ## Input sizes
 
-Recommended image sizes:
+Recommended image sizes (microscopy magnification):
 
 - 4096x4096 for spacing 4.0 (2.5x)
 - 8192x8192 for spacing 2.0 (5x)
