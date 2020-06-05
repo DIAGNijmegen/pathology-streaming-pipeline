@@ -76,7 +76,7 @@ python train.py \
 
 ### 3. Options
 
-There are quite some options:
+There are quite some options (disable boolean options by prepending with `no_`, so e.g., `no_mixedprecision`):
 
 | Required options | Description |
 | ---:         |     :---      |
