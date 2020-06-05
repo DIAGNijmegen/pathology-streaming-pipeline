@@ -14,8 +14,9 @@ Papers until now about this method:
 ## Requirements
 **Packages:**
 - Install [libvips](https://libvips.github.io/libvips/install.html) 
-- See requirements.txt, install via ` pip install -r requirements.txt`
-- Make sure the repo is in your pythonpath
+- See [requirements.txt](https://github.com/DIAGNijmegen/pathology-streaming-pipeline/blob/master/requirements.txt), install via ` pip install -r requirements.txt`
+- Nightly Pytorch (1.6) for mixedprecision support
+- Make sure the repo is in your `$PYTHONPATH`
 
 **Hardware requirements:**
  - GPU with 11 GB memory (smaller could work with smaller tile-sizes)
