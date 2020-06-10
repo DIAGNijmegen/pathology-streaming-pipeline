@@ -8,8 +8,8 @@ This repository will give an overview on how to use [streaming](https://github.c
 
 Papers until now about this method:
 
-- Full paper (submitted; arXiv preprint): will be announced on Monday
-- Full paper (in review; arXiv preprint): http://arxiv.org/abs/1911.04432
+- Application on prostate data, paper (submitted; arXiv preprint): https://arxiv.org/abs/2006.03394
+- Full methods paper (in review; arXiv preprint): http://arxiv.org/abs/1911.04432
 - MIDL 2018 (abstract, proof of concept): https://openreview.net/forum?id=HJ7lIcjoM
 - Git repository of original method: https://github.com/DIAGNijmegen/StreamingCNN
 
