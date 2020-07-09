@@ -8,8 +8,10 @@ import pathlib
 from streaming.torch_utils.diagnostics import check_params_distributed
 from streaming.torch_utils.trainer import Trainer, TrainerOptions
 
-if '1.6' in torch.__version__: # type:ignore
-    from torch.cuda.amp import autocast
+try:
+    from torch.cuda.amp import autocast  # pylint: disable=import-error,no-name-in-module
+except ModuleNotFoundError:
+    pass
 
 @dataclasses.dataclass
 class CheckpointedTrainerOptions(TrainerOptions):

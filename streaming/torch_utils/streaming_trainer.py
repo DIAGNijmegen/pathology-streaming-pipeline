@@ -5,9 +5,13 @@ import os
 
 from .scnn import StreamingCNN
 from .checkpointed_trainer import CheckpointedTrainer, CheckpointedTrainerOptions
+from streaming.torch_utils.scnn import StreamingCNN
+from streaming.torch_utils.checkpointed_trainer import CheckpointedTrainer, CheckpointedTrainerOptions
 
-if '1.6' in torch.__version__:  # type:ignore
-    from torch.cuda.amp import autocast
+try:
+    from torch.cuda.amp import autocast  # pylint: disable=import-error,no-name-in-module
+except ModuleNotFoundError:
+    pass
 
 @dataclasses.dataclass
 class StreamingTrainerOptions(CheckpointedTrainerOptions):

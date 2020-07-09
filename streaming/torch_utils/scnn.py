@@ -25,13 +25,13 @@ from tqdm import tqdm
 
 # from torch.nn.grad import _grad_input_padding
 
-if hasattr(torch.cuda, 'amp'):
+try:
+    from torch.cuda.amp import autocast  # pylint: disable=import-error,no-name-in-module
     def forward_amp_decorator(func): 
         return torch.cuda.amp.custom_fwd(func)  # type:ignore
     def backward_amp_decorator(func): 
         return torch.cuda.amp.custom_bwd(func)  # type:ignore
-    from torch.cuda.amp import autocast
-else:
+except ModuleNotFoundError:
     def forward_amp_decorator(func): 
         return func
     def backward_amp_decorator(func):

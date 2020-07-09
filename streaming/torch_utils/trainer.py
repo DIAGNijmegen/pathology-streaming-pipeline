@@ -7,9 +7,11 @@ import torch
 import torch.distributed as dist
 import pathlib
 
-if '1.6' in torch.__version__:  # type:ignore
-    from torch.cuda.amp import autocast
-    from torch.cuda.amp import GradScaler
+try:
+    from torch.cuda.amp import autocast  # pylint: disable=import-error,no-name-in-module
+    from torch.cuda.amp import GradScaler  # pylint: disable=import-error,no-name-in-module
+except ModuleNotFoundError:
+    pass
 
 @dataclasses.dataclass
 class TrainerOptions:
