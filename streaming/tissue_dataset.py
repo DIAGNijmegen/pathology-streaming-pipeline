@@ -17,44 +17,6 @@ import os
 # Things can get messy with big images and multi-GPU:
 cv2.setNumThreads(0)
 
-
-# def rand_matrix(width, height, alpha, sigma, grid_scale=16):
-#     # originally from https://github.com/rwightman/tensorflow-litterbox
-#     """Elastic deformation of images as per [Simard2003].  """
-
-#     # Good values for:
-#     #   alpha: 2000
-#     #   sigma: between 40 and 60
-
-#     alpha //= grid_scale  # Does scaling these make sense? seems to provide
-#     sigma //= grid_scale  # more similar end result when scaling grid used.
-
-#     # Downscaling the random grid and then upsizing post filter
-#     # improves performance. Approx 3x for scale of 4, diminishing returns after.
-#     grid_shape = (width // grid_scale, height // grid_scale)
-
-#     blur_size = int(grid_scale * sigma) | 1
-
-#     rand_x = cv2.GaussianBlur((np.random.rand(*grid_shape) * 2 - 1).astype(np.float32),
-#                               ksize=(blur_size, blur_size),
-#                               sigmaX=sigma) * alpha
-
-#     rand_y = cv2.GaussianBlur((np.random.rand(*grid_shape) * 2 - 1).astype(np.float32),
-#                               ksize=(blur_size, blur_size),
-#                               sigmaX=sigma) * alpha
-
-#     rand_x[0:grid_scale] = 0  # upper border
-#     rand_x[-grid_scale:] = 0  # lower border
-#     rand_x[:, 0:grid_scale] = 0  # left border
-#     rand_x[:, -grid_scale:] = 0  # right border
-
-#     rand_y[0:grid_scale] = 0
-#     rand_y[-grid_scale:] = 0
-#     rand_y[:, -grid_scale:] = 0
-#     rand_y[:, 0:grid_scale] = 0
-
-#     return rand_x, rand_y
-
 class TissueDataset(torch.utils.data.Dataset):
     def __init__(self, img_size, img_dir, cache_dir, filetype, csv_fname, augmentations=True, 
                  limit_size=-1, variable_input_shapes=False, tile_size=4096, resize=1, multiply_len=1, num_classes=2,
@@ -231,13 +193,10 @@ class TissueDataset(torch.utils.data.Dataset):
         def rand_matrix(width, height, alpha, sigma, grid_scale=16):
             # Originally from https://github.com/rwightman/tensorflow-litterbox
             """Elastic deformation of images as per [Simard2003].  """
-            # alpha //= grid_scale
-            # sigma //= grid_scale
-
             # Downscaling the random grid and then upsizing post filter
             # improves performance. Approx 3x for scale of 4, diminishing returns after.
             grid_shape = (height, width)
-            # blur_size = int(grid_scale * sigma) | 1
+
             if sigma[0] % 2 == 0: sigma = (sigma[0]+1, sigma[1])
             if sigma[1] % 2 == 0: sigma = (sigma[0], sigma[1]+1)
 
@@ -288,7 +247,7 @@ class TissueDataset(torch.utils.data.Dataset):
 
     def color_jitter(self, image):
         image = image.colourspace("lch")
-        delta = 0.25
+        delta = 0.05
         luminance_diff = random.uniform(1.0-delta, 1.0+delta)  # roughly brightness
         chroma_diff = random.uniform(1.0-delta, 1.0+delta)  # roughly saturation
         hue_diff = random.uniform(1.0-delta, 1.0+delta)  # hue
@@ -308,16 +267,3 @@ class TissueDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.images) * self.multiply_len
-
-# if False:
-# ds = TissueDataset(16384,
-#                    '/mnt/netcache/pathology/projects/pathology-streaming-pipeline/camelyon/data',
-#                    '/home/hans/',
-#                    '.jpg',
-#                    '/mnt/netcache/pathology/projects/pathology-streaming-pipeline/camelyon/train_bin.csv')
-# import pyvips
-# image = pyvips.Image.new_from_file('../camelyon/test_image.jpg')    
-
-#     img_np = ds.transforms(img)
-#     pil_img = PIL.Image.fromarray(img_np).resize((img_np.shape[0]//16,img_np.shape[1]//16))
-#     showfig(pil_img)

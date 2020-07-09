@@ -8,16 +8,29 @@ This repository will give an overview on how to use [streaming](https://github.c
 
 Papers until now about this method:
 
-- Full paper (in review; arXiv preprint): http://arxiv.org/abs/1911.04432
+- Application on prostate data, paper (submitted; arXiv preprint): https://arxiv.org/abs/2006.03394
+- Full methods paper (in review; arXiv preprint): http://arxiv.org/abs/1911.04432
 - MIDL 2018 (abstract, proof of concept): https://openreview.net/forum?id=HJ7lIcjoM
+- Git repository of original method: https://github.com/DIAGNijmegen/StreamingCNN
 
+## Requirements
+**Packages:**
+- Install [libvips](https://libvips.github.io/libvips/install.html) 
+- See [requirements.txt](https://github.com/DIAGNijmegen/pathology-streaming-pipeline/blob/master/requirements.txt), install via ` pip install -r requirements.txt`
+- Nightly Pytorch (1.6) for mixedprecision support
+- Make sure the repo is in your `$PYTHONPATH`
+
+**Hardware requirements:**
+ - GPU with 11 GB memory (smaller could work with smaller tile-sizes)
+ - Preferably 32+ GB RAM (go for less workers when you have less memory available)
+ 
 ## Network
 
-For now, only the *ResNet-34* implementation is checked. Other networks could be implemented.
+For now, only the *ResNet-34* implementation is checked. Other networks could be implemented (please make an issue, I can help).
 
 ## Input sizes
 
-Recommended image sizes:
+Recommended image sizes (microscopy magnification):
 
 - 4096x4096 for spacing 4.0 (2.5x)
 - 8192x8192 for spacing 2.0 (5x)
@@ -39,7 +52,7 @@ TRAIN_2,1
 ### 1. Prepare data
 
 ```bash
-python trim_tissue.py \
+python streaming/trim_tissue.py \
     --csv='' \
     --slide-dir='' \
     --filetype='tif' \
@@ -49,7 +62,7 @@ python trim_tissue.py \
 
 ### 2. Train network!
 ```bash
-python train.py \
+python streaming/train.py \
     --name=test-name \
     --train_csv='train.csv' \
     --val_csv='val.csv' \
@@ -63,7 +76,7 @@ python train.py \
 
 ### 3. Options
 
-There are quite some options:
+There are quite some options (disable boolean options by prepending with `no_`, so e.g., `no_mixedprecision`):
 
 | Required options | Description |
 | ---:         |     :---      |
