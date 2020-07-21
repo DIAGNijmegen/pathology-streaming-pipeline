@@ -24,6 +24,9 @@ Papers until now about this method:
  - GPU with 11 GB memory (smaller could work with smaller tile-sizes)
  - Preferably 32+ GB RAM (go for less workers when you have less memory available)
  
+**Windows users**
+ - Please see issues [#2](https://github.com/DIAGNijmegen/pathology-streaming-pipeline/issues/2) and [#3](https://github.com/DIAGNijmegen/pathology-streaming-pipeline/issues/3) for help with building the cpp extensions.
+ 
 ## Network
 
 For now, only the *ResNet-34* implementation is checked. Other networks could be implemented (please make an issue, I can help).
