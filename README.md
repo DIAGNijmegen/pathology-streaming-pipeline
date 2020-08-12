@@ -90,22 +90,22 @@ There are quite some options (disable boolean options by prepending with `no_`, 
 | `filetype: str` |  default: `'.jpg'`. The file-extension of the images. |
 | **Train options** | |
 | `lr: float` | default: `1e-4` . Learning rate. |
-| `batch_size: int` | default: `16` . Effective mini-batch size. |
+| `batch_size: int` | default: `16`. Effective mini-batch size. |
 | `pretrained: bool` | default: `True`. Whether to use ImageNet weights. |
 | `image_size: int` | default: `16384`. Effective input size of the network. |
 | `tile_size: int` | default: `5120`. The input/tile size of the streaming-part of the network. |
-| `epochs: int` | default: `50` . How many epochs to train. |
+| `epochs: int` | default: `50`. How many epochs to train. |
 | `multilabel: bool` | default: `False`. |
 | `regression: bool` | default: `False`. |
 | **Validation options** | |
 | `validation: bool` | default: `True`. Whether to run on validation set. |
-| `validation_interval: int` | default: `1` . How many times to run on validation set, after n train epochs. |
+| `validation_interval: int` | default: `1`. How many times to run on validation set, after n train epochs. |
 | `epoch_multiply: int` | default: `1`. This will increase the size of one train epoch by reusing train images. |
 | **Increase speed** | |
 | `mixedprecision: bool` | default: `True`. Paper is trained with full precision, but this is faster. |
 | `variable_input_shapes: bool` | default: `False`. When the images vary a lot with size, this helps with speed. |
 | `normalize_on_gpu: bool` | default: `True`. Helps with RAM usage of dataloaders. |
-| `num_workers: int` | default: `2` . Number of dataloader workers. |
+| `num_workers: int` | default: `2`. Number of dataloader workers. |
 | `convert_to_vips: bool` | default: `False`. |
 | **Model options** | |
 | `resnet: bool` | default: `True`. Only resnet is tested so far. |
@@ -116,9 +116,9 @@ There are quite some options (disable boolean options by prepending with `no_`, 
 | `resume_name: str` | default: `''`. Restart from another experiment with this name. |
 | `resume_epoch: int` | default: `-1`. Restart from specific epoch. |
 | `save: bool` | default: `True`. Save checkpoints. |
-| `progressbar: bool` | default: `True` . Show the progressbar. |
+| `progressbar: bool` | default: `True`. Show the progressbar. |
 | **Evaluation options** | |
-| `weight_averaging: bool` | default: `False`. average weights over 5 epochs around picked epoch. |
+| `weight_averaging: bool` | default: `False`. Average weights over 5 epochs around picked epoch. |
 | `only_eval: bool` | default: `False`. Only do one evaluation epoch. |
 | **Obscure train options** | |
 | `gather_batch_on_one_gpu: bool` | default: `False`. |
