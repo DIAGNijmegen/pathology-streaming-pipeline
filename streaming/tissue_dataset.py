@@ -84,7 +84,11 @@ class TissueDataset(torch.utils.data.Dataset):
     def biopsy_fname_for_index(self, index):
         img_fname, label = self.images[index]
         img_path = pathlib.Path(self.img_dir) / pathlib.Path(img_fname).with_suffix(self.filetype)
-        cache_path = pathlib.Path(self.cache_dir) / pathlib.Path(img_fname).with_suffix('.v')
+        stem = pathlib.Path(img_fname).stem
+        if self.convert_to_vips:
+            cache_path = pathlib.Path(self.cache_dir) / pathlib.Path(stem + '_cache').with_suffix('.v')
+        else:
+            cache_path = pathlib.Path(self.cache_dir) / pathlib.Path(stem + '_cache').with_suffix(self.filetype)
         mask_fname = pathlib.Path(self.img_dir) / pathlib.Path(img_fname + '_msk')
         mask_path = mask_fname.with_suffix('.npy')
         if '[' in label: 
