@@ -30,6 +30,8 @@ def create_parser():
     parser.add_argument('--output-spacing', default=1.0, type=float, required=False, help='downsample the wsi for sharpness')
 
     parser.add_argument('--num-processes', default=4, type=int, help='how many processes to parallely extract')
+    parser.add_argument('--dont_remove_empty_regions', action='store_false')
+
     return parser
 
 def zero_runs(a):
@@ -82,7 +84,7 @@ class TissueExtractor(object):
     reader: mir.MultiResolutionImage
     mask: np.ndarray
 
-    def __init__(self, save_dir: str, masks_dir: str, mask_suffix: str, output_spacing=1.0, threshold_downsample=32):
+    def __init__(self, save_dir: str, masks_dir: str, mask_suffix: str, output_spacing=1.0, threshold_downsample=32, remove_empty_regions=True):
         super().__init__()
         assert save_dir
         self.threshold_downsample = threshold_downsample
@@ -90,6 +92,7 @@ class TissueExtractor(object):
         self.output_spacing = output_spacing
         self.masks_dir = pathlib.Path(masks_dir) if masks_dir else None  # type:ignore
         self.mask_suffix = mask_suffix
+        self.should_remove_empty_regions = remove_empty_regions
 
     def extract_files(self, files):
         for file in files:
@@ -113,13 +116,15 @@ class TissueExtractor(object):
         sampling_mask = self.create_sampling_mask(self.mask, coords)
         empty_rows_mask = self.translate_regions_to_sampling_mask(empty_rows)
         empty_cols_mask = self.translate_regions_to_sampling_mask(empty_cols)
-        sampling_mask = self.remove_empty_regions(sampling_mask, empty_rows_mask, empty_cols_mask)
+        if self.should_remove_empty_regions:
+            sampling_mask = self.remove_empty_regions(sampling_mask, empty_rows_mask, empty_cols_mask)
         self.save_sampling_mask(sampling_mask, fname)
 
         image = self.fetch_region(coords)
         empty_rows_img = self.translate_regions_to_image(empty_rows)
         empty_cols_img = self.translate_regions_to_image(empty_cols)
-        image = self.remove_empty_regions(image, empty_rows_img, empty_cols_img)
+        if self.should_remove_empty_regions:
+            image = self.remove_empty_regions(image, empty_rows_img, empty_cols_img)
         self.write_img(image, fname.with_suffix(suffix))
 
         print('Wrote', fname.with_suffix(suffix))
@@ -353,8 +358,8 @@ class TissueExtractor(object):
         else:
             cv2.imwrite(str(fname), cv2.cvtColor(image, cv2.COLOR_BGR2RGB), [int(cv2.IMWRITE_JPEG_QUALITY), quality])
 
-def extract_tissue(file, save_dir, masks_dir, mask_suffix, output_spacing):
-    extractor = TissueExtractor(save_dir, masks_dir, mask_suffix, output_spacing)
+def extract_tissue(file, save_dir, masks_dir, mask_suffix, output_spacing, remove_empty_regions):
+    extractor = TissueExtractor(save_dir, masks_dir, mask_suffix, output_spacing, remove_empty_regions)
 
     fname = pathlib.Path(file)
     save_dir = pathlib.Path(save_dir)
@@ -370,7 +375,7 @@ if __name__ == '__main__':
     num_cores = args.num_processes
 
     if args.image:
-        extract_tissue(args.image, args.save_dir, args.masks_dir, args.mask_suffix,  args.output_spacing)
+        extract_tissue(args.image, args.save_dir, args.masks_dir, args.mask_suffix, args.output_spacing, args.remove_empty_regions)
     else:
         images_dir = pathlib.Path(args.slides_dir) if args.slides_dir else None
         if args.csv:
@@ -389,4 +394,5 @@ if __name__ == '__main__':
                                                            args.save_dir,
                                                            args.masks_dir,
                                                            args.mask_suffix,
-                                                           args.output_spacing) for file in images)
+                                                           args.output_spacing, 
+                                                           args.remove_empty_regions) for file in images)
