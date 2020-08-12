@@ -116,12 +116,12 @@ class TissueDataset(torch.utils.data.Dataset):
         interp = pyvips.Interpolate.new('bilinear')
 
         if self.augmentations:
-            image = self.random_flip(image)
             image = self.random_rotate(image, interp)
+            image = self.random_flip(image)
             image = self.limit_size(image, mask)
             image = self.color_jitter(image)
-            image = self.elastic_transform(image, interp)
-        elif mask is not None:
+            image = self.elastic_transform_old(image, interp)
+        elif mask is not None and not self.variable_input_shapes:
             # use highest value in mask for validation
             image = self.crop_using_mask(mask, image, random_index=False)
 
@@ -198,6 +198,53 @@ class TissueDataset(torch.utils.data.Dataset):
         image = image.crop(x, y, min(image.width, self.img_size), min(image.height, self.img_size))
         return image
 
+    def elastic_transform_old(self, image, interp, adjust_for_image_size=False):
+        def rand_matrix(width, height, alpha, sigma, grid_scale=16):
+            # Originally from https://github.com/rwightman/tensorflow-litterbox
+            """Elastic deformation of images as per [Simard2003].  """
+            alpha //= grid_scale
+            sigma //= grid_scale
+
+            # Downscaling the random grid and then upsizing post filter
+            # improves performance. Approx 3x for scale of 4, diminishing returns after.
+            grid_shape = (height // grid_scale, width // grid_scale)
+            blur_size = int(grid_scale * sigma) | 1
+
+            rand_x = cv2.GaussianBlur((np.random.rand(*grid_shape) * 2 - 1).astype(np.float32),
+                                      ksize=(blur_size, blur_size),
+                                      sigmaX=sigma) * alpha
+            rand_y = cv2.GaussianBlur((np.random.rand(*grid_shape) * 2 - 1).astype(np.float32),
+                                      ksize=(blur_size, blur_size),
+                                      sigmaX=sigma) * alpha
+
+            return rand_x, rand_y
+
+        rand_x, rand_y = rand_matrix(image.width, image.height, alpha=1000, sigma=150, grid_scale=16)
+
+        rand_x = rand_x[:image.height // 16, :image.width // 16]
+        rand_y = rand_y[:image.height // 16, :image.width // 16]
+
+        grid_scale = 16
+        rand_x[0:grid_scale] = 0  # upper border
+        rand_x[-grid_scale:] = 0  # lower border
+        rand_x[:, 0:grid_scale] = 0  # left border
+        rand_x[:, -grid_scale:] = 0  # right border
+
+        rand_y[0:grid_scale] = 0
+        rand_y[-grid_scale:] = 0
+        rand_y[:, -grid_scale:] = 0
+        rand_y[:, 0:grid_scale] = 0
+
+        shift_map = np.stack([rand_x, rand_y], axis=2).flatten()
+        trans_map = pyvips.Image.new_from_memory(shift_map.data, image.width // 16, image.height // 16, 2, 'float')
+        trans_map = trans_map.resize(16, kernel='linear')
+        coord_map = pyvips.Image.xyz(image.width, image.height)
+        coord_map += trans_map
+
+        image = image.mapim(coord_map, interpolate=interp)
+
+        return image
+
     def elastic_transform(self, image, interp, adjust_for_image_size=False):
         def rand_matrix(width, height, alpha, sigma, grid_scale=16):
             # Originally from https://github.com/rwightman/tensorflow-litterbox
@@ -254,9 +301,8 @@ class TissueDataset(torch.utils.data.Dataset):
 
         return image
 
-    def color_jitter(self, image):
+    def color_jitter(self, image, delta=0.05):
         image = image.colourspace("lch")
-        delta = 0.05
         luminance_diff = random.uniform(1.0-delta, 1.0+delta)  # roughly brightness
         chroma_diff = random.uniform(1.0-delta, 1.0+delta)  # roughly saturation
         hue_diff = random.uniform(1.0-delta, 1.0+delta)  # hue
