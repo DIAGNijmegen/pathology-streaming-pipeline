@@ -1,5 +1,4 @@
 import os
-import typing
 
 import dataclasses
 import numpy as np
@@ -32,6 +31,14 @@ class TrainerOptions:
     regression: bool = False
 
 class Trainer():
+    images_evaluated: int = 0
+    accumulated_batches: int = 0
+    accumulated_loss: float = 0.0
+    accumulated_accuracy: float = 0.0
+
+    all_predictions = []
+    all_labels = []
+
     def __init__(self, options: TrainerOptions):
         self.net = options.net
         self.dataloader = options.dataloader
@@ -134,7 +141,7 @@ class Trainer():
 
     def gather(self, results):
         results = torch.tensor(results, dtype=torch.float32).cuda()
-        tensor_list = [results.new_empty(results.shape) for i in range(self.n_gpus)]
+        tensor_list = [results.new_empty(results.shape) for _ in range(self.n_gpus)]
         dist.all_gather(tensor_list, results)
         cpu_list = [tensor.cpu().numpy() for tensor in tensor_list]
         return np.concatenate(cpu_list, axis=0)
@@ -156,7 +163,7 @@ class Trainer():
         if self.distributed: self.correct_loss_for_multigpu()
         return self.all_predictions, self.all_labels
 
-    def validation_epoch(self, batch_callback):  # -> typing.Tuple[np.array, np.array]:
+    def validation_epoch(self, batch_callback):
         self.prepare_network_for_evaluation()
         self.reset_epoch_stats()
         self.evaluate_full_dataloader(batch_callback)
@@ -221,8 +228,8 @@ class Trainer():
     def distribute_gradients_if_needed(self):
         if self.distributed:
             for _, param in self.net.named_parameters():
-                if param.grad is None: continue
-                else: dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+                if param.grad is not None:
+                    dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
 
     def save_checkpoint(self, name, epoch, additional={}):
         state = {
@@ -264,7 +271,7 @@ class Trainer():
 
     def load_state_dict(self, state):
         try: self.optimizer.load_state_dict(state['optimizer'])
-        except: print('WARNING: Optimizer not restored')
+        except KeyError: print('WARNING: Optimizer not restored')
         self.net.load_state_dict(state['state_dict'])
 
     def load_checkpoint_if_available(self, name, epoch=-1):
