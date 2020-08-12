@@ -17,7 +17,7 @@ Papers until now about this method:
 **Packages:**
 - Install [libvips](https://libvips.github.io/libvips/install.html) 
 - See [requirements.txt](https://github.com/DIAGNijmegen/pathology-streaming-pipeline/blob/master/requirements.txt), install via ` pip install -r requirements.txt`
-- Nightly Pytorch (1.6) for mixedprecision support
+- Pytorch (1.6+) for mixedprecision support
 - Make sure the repo is in your `$PYTHONPATH`
 
 **Hardware requirements:**
