@@ -237,7 +237,7 @@ class CheckpointedTrainer(Trainer):
             check_params_distributed(self.net, self.n_gpus, self.gpu_rank)
 
     def stack_epoch_predictions(self):
-        self.all_predictions, self.all_labels = self.epoch_predictions_and_labels(gather=not self.gather_batch_on_one_gpu)
+        self.all_predictions, self.all_labels = self.epoch_predictions_and_labels(gather=self.distributed and not self.gather_batch_on_one_gpu)
 
     def check_dataloading_speed(self, start_time, stop_time, threshold=1.0):
         if stop_time - start_time > threshold and not hasattr(self, 'warned_dataloader'):
