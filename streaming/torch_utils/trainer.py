@@ -122,7 +122,7 @@ class Trainer():
         self.accumulated_loss = 0.0
         self.accumulated_accuracy = 0.0
         for pred, label in zip(self.all_predictions, self.all_labels):
-            self.accumulated_loss += float(self.criterion(pred[None], label))
+            self.accumulated_loss += float(self.criterion(pred[None], label[None]))
             self.accumulated_accuracy += self.accuracy_with_predictions(pred[None], label)
         self.images_evaluated = len(self.all_predictions)
 
@@ -131,11 +131,20 @@ class Trainer():
         if len(self.all_predictions) > 0:
             preds = np.vstack(self.all_predictions)
             labels = np.vstack(self.all_labels)
+
             if self.distributed and gather:
                 preds = list(self.gather(preds))
                 labels = list(self.gather(labels))
-            return torch.from_numpy(np.array(preds)), \
-                torch.from_numpy(np.array(labels).astype(self.all_labels[0].dtype))
+
+            preds = torch.from_numpy(np.array(preds))
+            labels = torch.from_numpy(np.array(labels).astype(self.all_labels[0].dtype))
+
+            # reshape to correct shapes
+            if len(self.all_labels[0].shape) == 1: labels = labels.flatten()
+            # labels = labels.view(-1, self.all_labels[0].shape[0])
+            if len(self.all_predictions[0].shape) == 1: preds = preds.flatten()
+            # preds = preds.view(-1, self.all_predictions[0].shape[0])
+            return preds.float(), labels
         else:
             return torch.FloatTensor(), torch.LongTensor()
 
