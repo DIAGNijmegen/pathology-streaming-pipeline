@@ -32,7 +32,7 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
                                      self.tile_shape,
                                      verbose=(self.gpu_rank == 0),
                                      copy_to_gpu=True,
-                                     statistics_on_cpu=True,
+                                     statistics_on_cpu=(options.tile_shape[2] > 2800),
                                      normalize_on_gpu=options.normalize_on_gpu,
                                      state_dict=state_dict)
             # if self.gpu_rank != 1:
