@@ -58,9 +58,9 @@ class StreamingCheckpointedTrainer(CheckpointedTrainer):
             output = self.sCNN.forward(x)
         return output
 
-    def backward_image(self, x, fmap_grad):
+    def backward_image(self, x, gradient):
         if self.train_streaming_layers:
-            self.sCNN.backward(x, fmap_grad[None])
+            self.sCNN.backward(x, gradient[None])
 
 class CheckpointedStreamingMultiClassTrainer(StreamingCheckpointedTrainer):
     def accuracy_with_predictions(self, predictions, labels):
