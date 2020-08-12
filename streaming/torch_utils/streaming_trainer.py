@@ -3,8 +3,6 @@ import torch
 import dataclasses
 import os
 
-from .scnn import StreamingCNN
-from .checkpointed_trainer import CheckpointedTrainer, CheckpointedTrainerOptions
 from streaming.torch_utils.scnn import StreamingCNN
 from streaming.torch_utils.checkpointed_trainer import CheckpointedTrainer, CheckpointedTrainerOptions
 
