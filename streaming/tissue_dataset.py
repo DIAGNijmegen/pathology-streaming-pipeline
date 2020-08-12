@@ -62,7 +62,8 @@ class TissueDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         self.index = index
         try:
-            return self.get_data_label_for_index(index)
+            data, label = self.get_data_label_for_index(index)
+            return data, label
         except pyvips.error.Error as e:
             print(e)
             cache_fname = self.biopsy_fname_for_index(self.index)[2]
