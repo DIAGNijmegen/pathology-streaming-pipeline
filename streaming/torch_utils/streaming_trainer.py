@@ -16,6 +16,7 @@ class StreamingTrainerOptions(CheckpointedTrainerOptions):
     tile_shape = (1, 3, 600, 600)
     train_streaming_layers: bool = True
     average_over_five_crops_of_size: int = -1
+    normalize_on_gpu: bool = True
 
 class StreamingCheckpointedTrainer(CheckpointedTrainer):
     def __init__(self, options, sCNN=None):
