@@ -21,12 +21,13 @@ from streaming.torch_utils.streaming_trainer import \
 from streaming.torch_utils.utils import count_parameters, progress_bar
 from streaming.experiment_options import ExperimentOptions
 
+from torch.utils.data import DataLoader
 
 class DataLoaderX(torch.utils.data.DataLoader):
     def __iter__(self):
         return BackgroundGenerator(super().__iter__())
 
-class Experiment(object):
+class Experiment():
     validator: StreamingCheckpointedTrainer
     validation_dataset: torch.utils.data.Dataset
     validation_loader: torch.utils.data.DataLoader
@@ -44,7 +45,16 @@ class Experiment(object):
     verbose: bool
     resumed: bool = False
 
-    def __init__(self, settings: ExperimentOptions, distributed, world_size):
+    optimizer = None
+    loss: torch.nn.Module
+    epoch: int
+    freeze_layers: list = []
+    start_at_epoch: int = 0
+
+    net: torch.nn.Module
+    stream_net: torch.nn.Sequential
+
+    def __init__(self, settings: ExperimentOptions, running_distributed, world_size):
         """Initialize an experiment, this is an utility class to get training
         quickly with this framework.
 
@@ -60,7 +70,7 @@ class Experiment(object):
         self.settings = settings
         self.verbose = (self.settings.local_rank == 0)
         self.world_size = world_size
-        self.distributed = distributed
+        self.distributed = running_distributed
 
         # When training with mixed precision and only finetuning last layers, we
         # do not have to backpropagate the streaming layers
@@ -93,7 +103,7 @@ class Experiment(object):
         if self.verbose: print('Test distributed')
         results = torch.FloatTensor([0])  # type:ignore
         results = results.cuda()
-        tensor_list = [results.new_empty(results.shape) for i in range(self.world_size)]
+        tensor_list = [results.new_empty(results.shape) for _ in range(self.world_size)]
         torch.distributed.all_gather(tensor_list, results)
         if self.verbose: print('Succeeded distributed communication')
 
@@ -141,7 +151,7 @@ class Experiment(object):
         avg_loss = self.trainer.average_epoch_loss()
         print('Train loop, accuracy', avg_acc, 'loss', avg_loss)
 
-        for i, param_group in enumerate(self.optimizer.param_groups):  # type:ignore
+        for _, param_group in enumerate(self.optimizer.param_groups):  # type:ignore
             print('Current lr:', param_group['lr'])
 
     def log_eval_metrics(self, preds, gt, e):
@@ -188,10 +198,10 @@ class Experiment(object):
 
         if self.distributed:
             if shuffle:
-                    shuffle = False
-                    sampler = torch.utils.data.distributed.DistributedSampler(dataset,
-                                                                              num_replicas=torch.cuda.device_count(),
-                                                                              rank=self.settings.local_rank)
+                shuffle = False
+                sampler = torch.utils.data.distributed.DistributedSampler(dataset,
+                                                                          num_replicas=torch.cuda.device_count(),
+                                                                          rank=self.settings.local_rank)
             else:
                 if self.distributed:
                     sampler = OrderedDistributedSampler(dataset, num_replicas=torch.cuda.device_count(),
@@ -199,9 +209,10 @@ class Experiment(object):
 
         # TODO: maybe disable automatic batching?
         # https://pytorch.org/docs/stable/data.html
-        loader = DataLoaderX(dataset, sampler=sampler, batch_size=batch_size,
-                             shuffle=shuffle, num_workers=num_workers,
-                             pin_memory=False)
+        # pin memory True saves GPU memory?
+        loader = DataLoader(dataset, sampler=sampler, batch_size=batch_size,
+                            shuffle=shuffle, num_workers=num_workers,
+                            pin_memory=False)
 
         return loader, sampler
 
@@ -210,8 +221,8 @@ class Experiment(object):
         total_pos = np.sum(labels)
         total_neg = len(labels) - total_pos
         weights = np.array(labels, dtype=np.float32)
-        weights[weights==0] = total_pos / total_neg
-        weights[weights==1] = 1
+        weights[labels==0] = total_pos / total_neg
+        weights[labels==1] = 1
         if self.distributed:
             sampler = DistributedWeightedRandomSampler(weights, num_samples=len(self.train_dataset), replacement=True)
         else:
@@ -221,14 +232,15 @@ class Experiment(object):
     def _get_dataset(self, validation, csv_file):
         limit = self.settings.train_set_size
         if validation: limit = -1
+        variable_input_shapes = self.settings.validation_whole_input if validation else self.settings.variable_input_shapes
         return TissueDataset(img_size=self.settings.image_size,
                              img_dir=self.settings.data_dir,
-                             cache_dir=self.settings.data_dir,
+                             cache_dir=self.settings.copy_dir,
                              filetype=self.settings.filetype,
                              csv_fname=csv_file,
                              augmentations=(not validation),
                              limit_size=limit,
-                             variable_input_shapes=self.settings.variable_input_shapes,
+                             variable_input_shapes=variable_input_shapes,
                              tile_size=self.settings.tile_size,
                              multiply_len=self.settings.epoch_multiply if not validation else 1,
                              num_classes=self.settings.num_classes,
@@ -484,13 +496,13 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)  # type:ignore
 
-    options = ExperimentOptions()
-    parser = options.configure_parser_with_options()
+    exp_options = ExperimentOptions()
+    parser = exp_options.configure_parser_with_options()
     args = parser.parse_args()
-    options.parser_to_options(vars(args))
+    exp_options.parser_to_options(vars(args))
 
     print('Starting', args.local_rank, 'of n gpus:', torch.cuda.device_count())
 
     if distributed: torch.distributed.init_process_group(backend='nccl', init_method='env://')  # type:ignore
-    exp = Experiment(options, distributed, torch.cuda.device_count())
+    exp = Experiment(exp_options, distributed, torch.cuda.device_count())
     exp.run_experiment()

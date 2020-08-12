@@ -33,6 +33,7 @@ class ExperimentOptions:
 
     validation: bool = True  # Whether to run on validation set
     validation_interval: int = 1  # How many times to run on validation set, after n train epochs
+    validation_whole_input: bool = False
     epoch_multiply: int = 1  # This will increase the size of one train epoch by reusing train images
 
     # speed
