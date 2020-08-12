@@ -260,6 +260,7 @@ class CheckpointedTrainer(Trainer):
             torch.save(state, self.save_dir / pathlib.Path('checkpoint_' + name + '_last'))
         except Exception as e:
             print('WARNING: Network not stored', e)
+        print('Saved', epoch, self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'))
 
     def load_state_dict(self, state):
         try: self.optimizer.load_state_dict(state['optimizer'])
