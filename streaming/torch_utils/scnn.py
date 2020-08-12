@@ -5,6 +5,7 @@ MIT License
 import copy
 import math
 import os
+import copy
 from dataclasses import dataclass
 from itertools import repeat
 from typing import NamedTuple, Union, List
@@ -253,12 +254,12 @@ class StreamingConv2d(_ConvNd):
         dilation = _pair(dilation)
         super(StreamingConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, False, _pair(0), groups, bias, padding_mode)
         self.grad_lost = Lost(0, 0, 0, 0)
-        self.tile_output_box = Box(0, 0, 0, 0, None)
         self.reset()
 
     def reset(self):
         self.seen_indices = Box(0, 0, 0, 0, None)
         self.input_loc = Box(0, 0, 0, 0, None)
+        self.tile_output_box = Box(0, 0, 0, 0, None)
 
     def forward(self, input):       
         return conv2d(input, self.weight, self.bias, self.stride, self.padding, self.dilation, self.groups,
@@ -556,7 +557,7 @@ class StreamingCNN(object):
         if image.shape[H_DIM] <= tile_height: n_rows = 1
 
         if self.gather_input_gradient:
-            self.saliency_map = torch.zeros(image.shape, dtype=self.dtype, device=self.device)
+            self.saliency_map = torch.zeros(image.shape, dtype=self.dtype, device='cpu')
 
         if self.verbose: print('Number of tiles in forward:', n_rows * n_cols)
         if self.verbose: iterator = tqdm(range(n_rows))
@@ -737,6 +738,10 @@ class StreamingCNN(object):
                 # does this reduce speed significantly?
                 if self.should_normalize: tile = self._normalize_on_gpu(tile)
 
+                if self.gather_input_gradient:
+                    tile.requires_grad = True
+                    self.saliency_old_indices = copy.deepcopy(self.saliency_input_module.seen_indices)
+
                 if self.dtype == torch.float16:
                     with autocast(): 
                         tile_output = self.stream_module(tile)
@@ -823,8 +828,9 @@ class StreamingCNN(object):
                 return self._backward_saliency_hook(module, grad_in, grad_out)
 
             for mod in self.stream_module.modules():
-                if isinstance(mod, (torch.nn.Conv2d)):
+                if isinstance(mod, StreamingConv2d):
                     if mod.in_channels == 3:
+                        self.saliency_input_module = mod
                         back_handle = mod.register_backward_hook(back_lambda)
                         self._hooks.append(back_handle)
 
@@ -939,15 +945,17 @@ class StreamingCNN(object):
                     (stride[2] > 1 and kernel_size[2] > stride[2]):
                 valid_lost = self._non_max_border_amount(f_grad)
                 valid_grad.fill_(0)
-                overlap_0 = kernel_size[0] - stride[0]
-                overlap_1 = kernel_size[1] - stride[1]
-                valid_grad[valid_lost.top + overlap_0:
-                           valid_grad.shape[0] - valid_lost.bottom - overlap_0,
-                           valid_lost.left + overlap_1:
-                           valid_grad.shape[1] - valid_lost.right - overlap_1] = 1
+                overlap_rows = kernel_size[1] - stride[1]
+                overlap_cols = kernel_size[2] - stride[2]
+                valid_grad[valid_lost.top + overlap_rows:
+                           valid_grad.shape[0] - valid_lost.bottom - overlap_rows,
+                           valid_lost.left + overlap_cols:
+                           valid_grad.shape[1] - valid_lost.right - overlap_cols] = 1
 
             new_grad_in = valid_grad[None].expand(grad_in[0].shape[1], *valid_grad.shape)[None]
-            return ((new_grad_in.type(self.dtype) * 10 - 1), *grad_in[1:])
+            new_grad_in = (new_grad_in.type(self.dtype) * 10 - 1)
+            new_grad_in_lost = self._non_max_border_amount(new_grad_in)
+            return (new_grad_in, *grad_in[1:])
 
     def _backward_saliency_hook(self, module: StreamingConv2d, grad_in, grad_out, is_bias=False, change_grad=True):
         stride: List[int] = _triple(module.stride)  # type:ignore
@@ -962,29 +970,49 @@ class StreamingCNN(object):
         lost_right = grad_lost.right if not sides.right else 0
         lost = Lost(lost_top, lost_left, lost_bottom, lost_right)
 
+        grad = grad_out[0]
+        valid_grad = grad[:, :, lost_top:grad.shape[H_DIM] - lost_bottom,
+                          lost_left:grad.shape[W_DIM] - lost_right]
+
+        output_stride = module.output_stride * torch.tensor(stride)
+        input_loc = module.input_loc
+
+        # Move the location according to how many pixels have been trimmed
+        # this will be the location of the valid gradient of this layer in relation
+        # to the actual gradient in a normal backpass
+        data_loc_y = int(input_loc.y // output_stride[1]) + lost_top
+        data_loc_x = int(input_loc.x // output_stride[2]) + lost_left
+
+        data_loc = Box(data_loc_y, 0,
+                       data_loc_x, 0,
+                       input_loc.sides)
+
         # Calculate which part of the gradient is 'new'
-        new_output_box = module.tile_output_box
-        updated_total_indices = module.seen_indices
+        old_value_indices = self.saliency_old_indices
+        new_output_box, updated_total_indices = StreamingCNN._new_value_indices(valid_grad.shape,
+                                                                                data_loc,
+                                                                                old_value_indices)
 
         if module.in_channels == 3:
             valid_grad_in = grad_in[0][:, :,
-                                       lost.top*stride[0]:grad_in[0].shape[2] - lost.bottom*stride[0],
-                                       lost.left*stride[1]:grad_in[0].shape[3] - lost.right*stride[1]]
+                                       lost.top*stride[1]:grad_in[0].shape[2] - lost.bottom*stride[1],
+                                       lost.left*stride[2]:grad_in[0].shape[3] - lost.right*stride[2]]
 
             relevant_input_grad = valid_grad_in[:, :,
-                                                new_output_box.y*stride[0]:
-                                                new_output_box.y*stride[0] + new_output_box.height*stride[0],
-                                                new_output_box.x*stride[1]:
-                                                new_output_box.x*stride[1] + new_output_box.width*stride[1]]
+                                                new_output_box.y*stride[1]:
+                                                new_output_box.y*stride[1] + new_output_box.height*stride[1],
+                                                new_output_box.x*stride[2]:
+                                                new_output_box.x*stride[2] + new_output_box.width*stride[2]]
 
             self.saliency_map[:, :,
-                              updated_total_indices.y * stride[0]:
-                              updated_total_indices.height * stride[0],
-                              updated_total_indices.x * stride[1] - relevant_input_grad.shape[3]:
-                              updated_total_indices.x * stride[1]] = relevant_input_grad.detach().cpu()
+                              updated_total_indices.y * stride[1]:
+                              updated_total_indices.height * stride[1],
+                              updated_total_indices.x * stride[2] - relevant_input_grad.shape[3]:
+                              updated_total_indices.x * stride[2]] = relevant_input_grad.detach().cpu()
 
             del relevant_input_grad
             del valid_grad_in
+        return grad_in
 
     @staticmethod
     def _new_value_indices(data_shape, data_indices, old_value_indices):
