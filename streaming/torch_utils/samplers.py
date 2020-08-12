@@ -68,7 +68,7 @@ class DistributedWeightedRandomSampler(WeightedRandomSampler):
         [0, 1, 4, 3, 2]
     """
 
-    def __init__(self, weights, num_samples, num_replicas=None, rank=None, replacement=True, labels=[]):
+    def __init__(self, weights, num_samples, num_replicas=None, rank=None, replacement=True):
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -94,7 +94,6 @@ class DistributedWeightedRandomSampler(WeightedRandomSampler):
 
         self.num_samples = int(math.ceil(num_samples * 1.0 / self.num_replicas))
         self.total_size = self.num_samples * self.num_replicas
-        self.labels = np.array(labels)
 
     def __iter__(self):
         g = torch.Generator()
@@ -108,9 +107,6 @@ class DistributedWeightedRandomSampler(WeightedRandomSampler):
 
         # subsample
         indices = indices[self.rank:len(indices):self.num_replicas]
-        labels = self.labels[indices][0:10]
-        # print(labels)
-        # print(labels.sum() / len(labels), 'ratio pos/neg')
         assert len(indices) == self.num_samples
 
         return iter(indices)
