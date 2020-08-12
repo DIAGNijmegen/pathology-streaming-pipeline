@@ -260,13 +260,10 @@ class Trainer():
     def load_checkpoint(self, name, epoch=-1):
         if epoch > -1:
             state = torch.load(self.save_dir / pathlib.Path('checkpoint_' + name + '_' + str(epoch) + '_network'),
-                               map_location=lambda storage, loc: storage),
+                               map_location=lambda storage, loc: storage)
         else:
             state = torch.load(self.save_dir / pathlib.Path('checkpoint_' + name + '_last'),
                                map_location=lambda storage, loc: storage)
-
-        # TODO: this is a strange bug, only checkpoints of specific epochs are tuples
-        if isinstance(state, tuple): state = state[0]
         return state
 
     def load_state_dict(self, state):
