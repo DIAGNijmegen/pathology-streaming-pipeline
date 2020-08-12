@@ -10,6 +10,7 @@ import csv
 import torch.utils.data
 import pathlib
 import os
+import shutil
 
 # Save memory, seems to make it a wee bit slower.
 # pyvips.cache_set_max(0)
@@ -99,12 +100,15 @@ class TissueDataset(torch.utils.data.Dataset):
         return str(img_path), str(mask_path), str(cache_path), label
 
     def open_and_resize(self, img_fname, cache_fname):
-        if self.convert_to_vips and os.path.isfile(cache_fname):
-            image = pyvips.Image.new_from_file(cache_fname, memory=True)
+        if self.cache_dir and os.path.isfile(cache_fname):
+            image = pyvips.Image.new_from_file(cache_fname, memory=False)
         else:
-            image = pyvips.Image.new_from_file(img_fname, shrink=1/self.resize)
-            if self.convert_to_vips:
-                image.write_to_file(cache_fname)
+            if self.resize != 1:
+                image = pyvips.Image.new_from_file(img_fname, shrink=1/self.resize)
+                if self.cache_dir: image.write_to_file(cache_fname)
+            else:
+                image = pyvips.Image.new_from_file(img_fname)
+                if self.cache_dir: shutil.copyfile(img_fname, cache_fname)
         return image
 
     def transforms(self, image, mask=None, save=False):
