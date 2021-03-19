@@ -6,10 +6,16 @@ This repository will give an overview on how to use [streaming](https://github.c
 ![alt text](methods.png "StreamingCNN")
 
 
-Papers until now about this method:
+Papers until now about this method (please consider citing when using this code):
 
-- Application on prostate data, paper (submitted; arXiv preprint): https://arxiv.org/abs/2006.03394
-- Full methods paper (accepted; TPAMI): [preprint](http://arxiv.org/abs/1911.04432) / [TPAMI](https://ieeexplore.ieee.org/abstract/document/9178453)
+- _Application on prostate data, paper:_
+H. Pinckaers, W. Bulten, J. Van der Laak and G. Litjens, "Detection of prostate cancer in whole-slide images through end-to-end training with image-level labels," in IEEE Transactions on Medical Imaging, doi: [10.1109/TMI.2021.3066295](https://ieeexplore.ieee.org/document/9380553) - Open Access.
+
+- _Methods paper:_
+H. Pinckaers, B. van Ginneken and G. Litjens, "Streaming convolutional neural networks for end-to-end learning with multi-megapixel images," in IEEE Transactions on Pattern Analysis and Machine Intelligence, doi: [10.1109/TPAMI.2020.3019563](https://ieeexplore.ieee.org/abstract/document/9178453) - [older preprint](http://arxiv.org/abs/1911.04432)
+
+Other resources:
+
 - MIDL 2018 (abstract, proof of concept): https://openreview.net/forum?id=HJ7lIcjoM
 - Git repository of original method: https://github.com/DIAGNijmegen/StreamingCNN
 
